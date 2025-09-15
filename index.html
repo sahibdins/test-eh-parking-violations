@@ -7,27 +7,10 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
-  <style>
-    /* subtle toast */
-    #toast {
-      position: fixed;
-      bottom: 16px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: rgba(31, 41, 55, 0.95);
-      color: #e5e7eb;
-      border: 1px solid rgba(75, 85, 99, 0.7);
-      padding: 8px 12px;
-      border-radius: 10px;
-      font-size: 12px;
-      z-index: 10000;
-      display: none;
-    }
-  </style>
 </head>
-<body class="bg-gray-900 text-gray-100" oncontextmenu="return false;">
+<body class="bg-gray-900 text-gray-100">
 
-  <!-- ACCESS GATE OVERLAY -->
+  <!-- ACCESS GATE OVERLAY (outside allowed hours unless admin override) -->
   <div id="accessGate" class="fixed inset-0 z-50 hidden">
     <div class="absolute inset-0 bg-black/80"></div>
     <div class="relative z-10 h-full w-full flex items-center justify-center p-4">
@@ -51,9 +34,6 @@
       </div>
     </div>
   </div>
-
-  <!-- toast -->
-  <div id="toast" role="status" aria-live="polite"></div>
 
   <div class="max-w-5xl mx-auto p-6" id="appRoot">
     <header class="mb-6">
@@ -185,53 +165,403 @@
   </div>
 
   <script>
-    // showToast for blocked actions
-    const toastEl = document.getElementById("toast");
-    let toastTimer = null;
-    function showToast(msg){
-      toastEl.textContent = msg;
-      toastEl.style.display = "block";
-      clearTimeout(toastTimer);
-      toastTimer = setTimeout(() => { toastEl.style.display = "none"; }, 1500);
+    const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQErBNRgH1hcQYmr4hwDiMeAB1-Xwu4AT_2r2dWuWEooMXm80T4dGzhjxzG6OehqOFux2kZDHaIaW3g/pub?output=csv";
+
+    const COLS = {
+      timestamp: ["timestamp","time stamp","date","date/time"],
+      reason: ["reason for citation","reason","offense","offence"],
+      plate: ["license plate #","license plate","plate","plate #","license #"],
+      name: ["driver's name (if known)","driver name","student name","name"],
+      location: ["parking location:","location","lot"],
+      enforcer: ["parking enforcer first and last name:","enforcer","issued by"],
+      status: ["status","payment status","paid","is paid","paid?"]
+    };
+
+    let DATA = [], HEADMAP = {};
+    let lastFetchTime = null;
+    let showEnforcer = false; // hidden by default
+
+    // ACCESS GATE state
+    let adminOverride = false;
+
+    const loadStatus  = document.getElementById("loadStatus");
+    const lastUpdated = document.getElementById("lastUpdated");
+    const searchSection = document.getElementById("searchSection");
+    const resultsWrap = document.getElementById("resultsWrap");
+    const resultsBody = document.getElementById("resultsBody");
+    const statRecords = document.getElementById("statRecords");
+    const statMatches = document.getElementById("statMatches");
+    const statCount   = document.getElementById("statCount");
+    const plateQuery  = document.getElementById("plateQuery");
+    const nameQuery   = document.getElementById("nameQuery");
+    const statusFilter= document.getElementById("statusFilter");
+    const dateFromEl  = document.getElementById("dateFrom");
+    const dateToEl    = document.getElementById("dateTo");
+    const overallWrap = document.getElementById("overallWrap");
+    const overallBadge= document.getElementById("overallBadge");
+
+    // Enforcer lock controls
+    const enforcerPwd  = document.getElementById("enforcerPwd");
+    const btnUnlock    = document.getElementById("btnUnlock");
+    const btnLock      = document.getElementById("btnLock");
+    const enforcerMsg  = document.getElementById("enforcerMsg");
+    const enforcerState= document.getElementById("enforcerState");
+    const headerRow    = document.getElementById("resultsHeaderRow");
+
+    // Access gate controls
+    const accessGate = document.getElementById("accessGate");
+    const gatePwd    = document.getElementById("gatePwd");
+    theGateUnlock = document.getElementById("gateUnlock");
+    const gateUnlock = document.getElementById("gateUnlock");
+    const gateMsg    = document.getElementById("gateMsg");
+    const gateNow    = document.getElementById("gateNow");
+
+    function norm(s){ return String(s||"").trim(); }
+    function escapeHtml(s){ return String(s||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#39;"); }
+    function formatDate(s){
+      const d = new Date(s);
+      if (isNaN(d)) return s||"";
+      const pad=n=>String(n).padStart(2,"0");
+      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
     }
 
-    // Stronger deterrents: block right-click, ctrl+click, common inspect shortcuts
-    function blockCtx(e){ e.preventDefault(); showToast("Action disabled"); return false; }
-    window.addEventListener("contextmenu", blockCtx, true);
-    document.addEventListener("contextmenu", blockCtx, true);
-    document.body?.addEventListener("contextmenu", blockCtx, true);
-
-    function blockMouse(e){
-      if (e.button === 2 || e.which === 3 || e.button === 1) {
-        e.preventDefault(); showToast("Action disabled"); return false;
-      }
-      if (e.ctrlKey && (e.button === 0 || e.which === 1)) {
-        e.preventDefault(); showToast("Action disabled"); return false;
-      }
+    // "ago" display for last updated
+    function fmtAgo(ms){
+      const s = Math.floor(ms/1000);
+      if (s < 60) return `${s}s ago`;
+      const m = Math.floor(s/60);
+      if (m < 60) return `${m}m ${s%60}s ago`;
+      const h = Math.floor(m/60);
+      return `${h}h ${m%60}m ago`;
     }
-    ["mousedown","mouseup","auxclick","pointerdown","pointerup"].forEach(type => {
-      window.addEventListener(type, blockMouse, true);
-      document.addEventListener(type, blockMouse, true);
-    });
+    function updateLastUpdatedDisplay(){
+      if (!lastFetchTime) {
+        lastUpdated.textContent = "";
+        return;
+      }
+      const now = new Date();
+      const ago = now - lastFetchTime;
+      const fullDate = lastFetchTime.toLocaleString(); // full date + time
+      lastUpdated.textContent = `Last updated: ${fullDate} (${fmtAgo(ago)})`;
+    }
 
-    document.addEventListener("keydown", function(e){
-      const key = e.key.toLowerCase();
-      const ctrl = e.ctrlKey || e.metaKey;
-      const shift = e.shiftKey;
-      if (e.keyCode === 123) { e.preventDefault(); showToast("Action disabled"); return; }
-      if (ctrl && shift && ["i","j","c","k","p"].includes(key)) { e.preventDefault(); showToast("Action disabled"); return; }
-      if (ctrl && key === "u") { e.preventDefault(); showToast("Action disabled"); return; }
-    });
+    function findKey(header){
+      const h = String(header||"").toLowerCase().replace(/\s+/g," ").trim();
+      for (const k of Object.keys(COLS)){
+        for (const alias of COLS[k]){
+          const ha = h.replace(/[^a-z0-9 ]/g,"");
+          const aa = alias.replace(/[^a-z0-9 ]/g,"");
+          if (ha === aa) return k;
+        }
+      }
+      return null;
+    }
 
-    try {
-      const style = document.createElement("style");
-      style.textContent = `
-        * { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+    function buildHeadMap(headers){
+      HEADMAP = {};
+      headers.forEach((h,i) => {
+        const key = findKey(h);
+        if (key && !(key in HEADMAP)) HEADMAP[key] = i;
+      });
+      const required = ["timestamp","reason","plate"];
+      const missing = required.filter(k => !(k in HEADMAP));
+      if (missing.length) throw new Error("Missing required columns: " + missing.join(", "));
+    }
+
+    function normalizeRow(row){
+      const out = {timestamp:"",reason:"",plate:"",name:"",location:"",enforcer:"",status:""};
+      for (const key of Object.keys(HEADMAP)){
+        const idx = HEADMAP[key];
+        out[key] = norm(row[idx]);
+      }
+      return out;
+    }
+
+    function normalizeStatus(v){
+      const s = String(v||"").trim().toLowerCase();
+      if (["paid","true","yes","y","1","paid in full"].includes(s)) return "Paid";
+      if (["unpaid","false","no","n","0"].includes(s)) return "Unpaid";
+      return "Unpaid";
+    }
+
+    function statusBadge(status){
+      const isPaid = status === "Paid";
+      const classes = isPaid
+        ? "bg-green-700/70 text-green-100"
+        : "bg-red-700/70 text-red-100";
+      return `<span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${classes}">${status}</span>`;
+    }
+
+    // Build header row according to showEnforcer
+    function renderHeader(){
+      headerRow.innerHTML = `
+        <th class="text-left px-3 py-2">Timestamp</th>
+        <th class="text-left px-3 py-2">License Plate</th>
+        <th class="text-left px-3 py-2">Driver Name</th>
+        <th class="text-left px-3 py-2">Reason for Citation</th>
+        <th class="text-left px-3 py-2">Location</th>
+        ${showEnforcer ? '<th class="text-left px-3 py-2">Enforcer</th>' : ''}
+        <th class="text-left px-3 py-2">Status</th>
       `;
-      document.head.appendChild(style);
-    } catch {}
-  </script>
+    }
 
-  <!-- keep rest of your JavaScript app code here (loading CSV, filters, enforcer unlock, access gate, etc.) -->
+    function handleRecords(headers, rows){
+      try { buildHeadMap(headers); }
+      catch(e){
+        loadStatus.className="text-sm text-red-400";
+        loadStatus.textContent = e.message;
+        return;
+      }
+      DATA = rows.map(normalizeRow);
+      statRecords.textContent = DATA.length;
+      searchSection.classList.remove("hidden");
+      resultsWrap.classList.add("hidden");
+      loadStatus.className="text-sm text-green-400";
+      loadStatus.textContent = "Loaded " + DATA.length + " records.";
+
+      lastFetchTime = new Date();
+      updateLastUpdatedDisplay();
+    }
+
+    function normalizePlate(s){ return String(s||"").toUpperCase().replace(/[-\s]/g,""); }
+
+    // Date helpers
+    function parseDateOnlyInput(value){ // "YYYY-MM-DD" -> Date at local midnight
+      if (!value) return null;
+      const [y,m,d] = value.split("-").map(n => parseInt(n,10));
+      if (!y || !m || !d) return null;
+      return new Date(y, m-1, d, 0, 0, 0, 0);
+    }
+    function startOfDay(d){ return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0,0,0,0); }
+    function endOfDay(d){   return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23,59,59,999); }
+
+    function recordInDateRange(recTs, fromDate, toDate){
+      if (!fromDate && !toDate) return true; // no filter
+      const d = new Date(recTs);
+      if (isNaN(d)) return false; // if filter is set but timestamp not parseable, exclude
+      const t = d.getTime();
+      if (fromDate && t < startOfDay(fromDate).getTime()) return false;
+      if (toDate   && t > endOfDay(toDate).getTime())   return false;
+      return true;
+    }
+
+    function renderResults(matches){
+      renderHeader();
+
+      resultsBody.innerHTML = "";
+      for (const r of matches){
+        const st = normalizeStatus(r.status);
+        const tds = `
+          <td class="px-3 py-2">${escapeHtml(formatDate(r.timestamp))}</td>
+          <td class="px-3 py-2 font-semibold">${escapeHtml(r.plate)}</td>
+          <td class="px-3 py-2">${escapeHtml(r.name)}</td>
+          <td class="px-3 py-2">${escapeHtml(r.reason)}</td>
+          <td class="px-3 py-2">${escapeHtml(r.location || "")}</td>
+          ${showEnforcer ? `<td class="px-3 py-2">${escapeHtml(r.enforcer || "")}</td>` : ``}
+          <td class="px-3 py-2">${statusBadge(st)}</td>
+        `;
+        const tr = document.createElement("tr");
+        tr.innerHTML = tds;
+        resultsBody.appendChild(tr);
+      }
+      resultsWrap.classList.remove("hidden");
+    }
+
+    function runSearch(){
+      const plateQ = plateQuery.value.trim();
+      const nameQ  = nameQuery.value.trim();
+      const statusF = statusFilter.value; // 'all' | 'paid' | 'unpaid'
+      const fromD = parseDateOnlyInput(dateFromEl.value);
+      const toD   = parseDateOnlyInput(dateToEl.value);
+
+      if (!plateQ && !nameQ && statusF === 'all' && !fromD && !toD){
+        resultsWrap.classList.add("hidden");
+        overallWrap.classList.add("hidden");
+        statMatches.textContent = 0;
+        statCount.textContent = 0;
+        resultsBody.innerHTML = "";
+        return;
+      }
+
+      const normPlateQ = normalizePlate(plateQ);
+      const lcNameQ = nameQ.toLowerCase();
+
+      const matches = DATA.filter(r => {
+        let plateOk = true, nameOk = true, statusOk = true, dateOk = true;
+        if (plateQ) plateOk = normalizePlate(r.plate).includes(normPlateQ);
+        if (nameQ)  nameOk  = String(r.name||"").toLowerCase().includes(lcNameQ);
+        if (statusF !== 'all') {
+          statusOk = normalizeStatus(r.status) === (statusF === 'paid' ? 'Paid' : 'Unpaid');
+        }
+        if (fromD || toD) {
+          dateOk = recordInDateRange(r.timestamp, fromD, toD);
+        }
+        return plateOk && nameOk && statusOk && dateOk;
+      });
+
+      // Stats reflect current filters
+      statMatches.textContent = matches.length;
+      statCount.textContent = matches.length;
+
+      // Overall badge: Paid only if ALL matches are Paid
+      let overall = "Unpaid";
+      if (matches.length > 0 && matches.every(r => normalizeStatus(r.status) === "Paid")) {
+        overall = "Paid";
+      }
+      overallWrap.classList.remove("hidden");
+      overallBadge.className = "inline-flex items-center rounded-full px-3 py-1 text-sm font-medium " +
+        (overall === "Paid" ? "bg-green-700/70 text-green-100" : "bg-red-700/70 text-red-100");
+      overallBadge.textContent = overall;
+
+      renderResults(matches);
+    }
+
+    function loadFromCsv(){
+      loadStatus.className="text-sm text-gray-400";
+      loadStatus.textContent="Fetching data...";
+      Papa.parse(CSV_URL, {
+        download: true,
+        skipEmptyLines: true,
+        complete: (res) => {
+          const rows = (res.data||[]).filter(r => Array.isArray(r) && r.some(c => String(c||"").trim()!==""));
+          if (!rows.length){
+            loadStatus.className="text-sm text-red-400";
+            loadStatus.textContent="CSV appears empty.";
+            return;
+          }
+          const headers = rows[0].map(norm);
+          const body = rows.slice(1);
+          handleRecords(headers, body);
+        },
+        error: () => {
+          loadStatus.className="text-sm text-red-400";
+          loadStatus.textContent="Could not fetch/parse CSV.";
+        }
+      });
+    }
+
+    // Enforcer lock/unlock behavior
+    function updateEnforcerUI(){
+      enforcerState.textContent = showEnforcer ? "Enforcer: Visible" : "Enforcer: Hidden";
+      enforcerState.className = "text-xs rounded-full px-2 py-1 " + (showEnforcer ? "bg-green-700 text-green-100" : "bg-gray-700 text-gray-200");
+      btnUnlock.classList.toggle("hidden", showEnforcer);
+      enforcerPwd.classList.toggle("hidden", showEnforcer);
+      btnLock.classList.toggle("hidden", !showEnforcer);
+    }
+
+    btnUnlock.addEventListener("click", () => {
+      enforcerMsg.textContent = "";
+      const val = enforcerPwd.value.trim();
+      if (val === "2821"){
+        showEnforcer = true;
+        updateEnforcerUI();
+        runSearch(); // re-render with enforcer visible
+        enforcerPwd.value = "";
+      } else {
+        enforcerMsg.textContent = "Incorrect password.";
+      }
+    });
+
+    btnLock.addEventListener("click", () => {
+      showEnforcer = false;
+      updateEnforcerUI();
+      runSearch(); // re-render with enforcer hidden
+    });
+
+    // ===== Access Gate (time restriction in America/New_York) =====
+    // Allowed window: 07:45 to 15:15 (inclusive) in America/New_York
+    function nyNowParts(){
+      const fmt = new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/New_York",
+        hour12: false,
+        year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", second: "2-digit"
+      });
+      const parts = fmt.formatToParts(new Date());
+      const map = Object.fromEntries(parts.map(p => [p.type, p.value]));
+      return {
+        y: parseInt(map.year,10),
+        m: parseInt(map.month,10),
+        d: parseInt(map.day,10),
+        hh: parseInt(map.hour,10),
+        mm: parseInt(map.minute,10),
+        ss: parseInt(map.second,10),
+        label: `${map.month}/${map.day}/${map.year} ${map.hour}:${map.minute}:${map.second} ET`
+      };
+    }
+    function nyMinutesSinceMidnight(){
+      const p = nyNowParts();
+      return p.hh * 60 + p.mm;
+    }
+    function withinAllowedWindow(){
+      const mins = nyMinutesSinceMidnight();
+      const start = 7*60 + 45;  // 07:45
+      const end   = 15*60 + 15; // 15:15
+      return mins >= start && mins <= end;
+    }
+    function updateGateNowLabel(){
+      const p = nyNowParts();
+      gateNow.textContent = `Current time: ${p.label}`;
+    }
+    function showGate(){
+      accessGate.classList.remove("hidden");
+      updateGateNowLabel();
+    }
+    function hideGate(){
+      accessGate.classList.add("hidden");
+    }
+    function checkAccessGate(){
+      if (adminOverride) { hideGate(); return; }
+      if (withinAllowedWindow()) hideGate(); else showGate();
+    }
+
+    gateUnlock.addEventListener("click", () => {
+      gateMsg.textContent = "";
+      const val = gatePwd.value.trim();
+      if (val === "2821") {
+        adminOverride = true;
+        sessionStorage.setItem("adminOverride", "1");
+        hideGate();
+        gatePwd.value = "";
+      } else {
+        gateMsg.textContent = "Incorrect password.";
+      }
+    });
+    if (sessionStorage.getItem("adminOverride") === "1") adminOverride = true;
+
+    // ===== Events =====
+    document.getElementById("btnReload").addEventListener("click", loadFromCsv);
+    document.getElementById("btnSearch").addEventListener("click", runSearch);
+    document.getElementById("btnClear").addEventListener("click", () => {
+      plateQuery.value=""; nameQuery.value="";
+      statusFilter.value="all";
+      dateFromEl.value = "";
+      dateToEl.value = "";
+      resultsBody.innerHTML="";
+      resultsWrap.classList.add("hidden");
+      overallWrap.classList.add("hidden");
+      statMatches.textContent=0; statCount.textContent=0;
+    });
+    plateQuery.addEventListener("keyup", e => { if (e.key==="Enter") runSearch(); });
+    nameQuery.addEventListener("keyup", e => { if (e.key==="Enter") runSearch(); });
+    statusFilter.addEventListener("change", runSearch);
+    document.getElementById("btnApplyDates").addEventListener("click", runSearch);
+    document.getElementById("btnClearDates").addEventListener("click", () => { dateFromEl.value = ""; dateToEl.value = ""; runSearch(); });
+
+    // Initial UI state + load
+    updateEnforcerUI();
+    loadFromCsv();
+
+    // Auto-refresh data every 30 seconds
+    setInterval(() => { loadFromCsv(); }, 30000);
+
+    // Update "last updated" display every second
+    setInterval(updateLastUpdatedDisplay, 1000);
+
+    // Access gate checks
+    checkAccessGate();                     // on load
+    setInterval(checkAccessGate, 30000);   // re-check every 30s
+    setInterval(updateGateNowLabel, 1000); // update the clock text on the gate
+  </script>
 </body>
 </html>
