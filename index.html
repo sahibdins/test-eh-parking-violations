@@ -17,17 +17,35 @@
       </p>
     </header>
 
-    <!-- Status -->
+    <!-- Status + Refresh + Enforcer Lock -->
     <section class="bg-gray-800 rounded-xl shadow p-4 mb-6">
-      <div class="flex items-center justify-between gap-4">
-        <div>
-          <div id="loadStatus" class="text-sm text-gray-400">Loading data...</div>
-          <div id="lastUpdated" class="text-xs text-gray-500 mt-1"></div>
+      <div class="flex flex-col gap-3">
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <div id="loadStatus" class="text-sm text-gray-400">Loading data...</div>
+            <div id="lastUpdated" class="text-xs text-gray-500 mt-1"></div>
+          </div>
+          <button id="btnReload"
+                  class="rounded-lg bg-emerald-600 text-white px-4 py-2 text-sm font-medium hover:bg-emerald-700">
+            Reload
+          </button>
         </div>
-        <button id="btnReload"
-                class="rounded-lg bg-emerald-600 text-white px-4 py-2 text-sm font-medium hover:bg-emerald-700">
-          Reload
-        </button>
+
+        <!-- Enforcer Lock Controls -->
+        <div class="flex flex-wrap items-center gap-2">
+          <span id="enforcerState" class="text-xs rounded-full px-2 py-1 bg-gray-700 text-gray-200">Enforcer: Hidden</span>
+          <input id="enforcerPwd" type="password" placeholder="Enter password"
+                 class="rounded-lg border border-gray-600 bg-gray-900 text-gray-100 px-3 py-2 text-sm focus:outline-none focus:ring focus:ring-emerald-500" />
+          <button id="btnUnlock"
+                  class="rounded-lg bg-blue-600 text-white px-3 py-2 text-sm font-medium hover:bg-blue-700">
+            Unlock
+          </button>
+          <button id="btnLock"
+                  class="rounded-lg bg-gray-600 text-white px-3 py-2 text-sm font-medium hover:bg-gray-500 hidden">
+            Lock
+          </button>
+          <span id="enforcerMsg" class="text-xs text-red-400"></span>
+        </div>
       </div>
     </section>
 
@@ -77,13 +95,13 @@
       <div class="overflow-x-auto">
         <table class="min-w-full text-sm">
           <thead class="bg-gray-700 text-gray-200">
-            <tr>
+            <tr id="resultsHeaderRow">
               <th class="text-left px-3 py-2">Timestamp</th>
               <th class="text-left px-3 py-2">License Plate</th>
               <th class="text-left px-3 py-2">Driver Name</th>
               <th class="text-left px-3 py-2">Reason for Citation</th>
               <th class="text-left px-3 py-2">Location</th>
-              <th class="text-left px-3 py-2">Enforcer</th>
+              <!-- Enforcer header will be injected conditionally -->
               <th class="text-left px-3 py-2">Status</th>
             </tr>
           </thead>
@@ -108,6 +126,7 @@
 
     let DATA = [], HEADMAP = {};
     let lastFetchTime = null;
+    let showEnforcer = false; // locked by default
 
     const loadStatus  = document.getElementById("loadStatus");
     const lastUpdated = document.getElementById("lastUpdated");
@@ -121,6 +140,14 @@
     const nameQuery   = document.getElementById("nameQuery");
     const overallWrap = document.getElementById("overallWrap");
     const overallBadge= document.getElementById("overallBadge");
+
+    // Enforcer lock controls
+    const enforcerPwd  = document.getElementById("enforcerPwd");
+    const btnUnlock    = document.getElementById("btnUnlock");
+    const btnLock      = document.getElementById("btnLock");
+    const enforcerMsg  = document.getElementById("enforcerMsg");
+    const enforcerState= document.getElementById("enforcerState");
+    const headerRow    = document.getElementById("resultsHeaderRow");
 
     function norm(s){ return String(s||"").trim(); }
     function escapeHtml(s){ return String(s||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#39;"); }
@@ -197,6 +224,19 @@
       return `<span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${classes}">${status}</span>`;
     }
 
+    // Build header row according to showEnforcer
+    function renderHeader(){
+      headerRow.innerHTML = `
+        <th class="text-left px-3 py-2">Timestamp</th>
+        <th class="text-left px-3 py-2">License Plate</th>
+        <th class="text-left px-3 py-2">Driver Name</th>
+        <th class="text-left px-3 py-2">Reason for Citation</th>
+        <th class="text-left px-3 py-2">Location</th>
+        ${showEnforcer ? '<th class="text-left px-3 py-2">Enforcer</th>' : ''}
+        <th class="text-left px-3 py-2">Status</th>
+      `;
+    }
+
     function handleRecords(headers, rows){
       try { buildHeadMap(headers); }
       catch(e){
@@ -216,6 +256,30 @@
     }
 
     function normalizePlate(s){ return String(s||"").toUpperCase().replace(/[-\s]/g,""); }
+
+    function renderResults(matches){
+      // header (depends on showEnforcer)
+      renderHeader();
+
+      // rows
+      resultsBody.innerHTML = "";
+      for (const r of matches){
+        const st = normalizeStatus(r.status);
+        const tds = `
+          <td class="px-3 py-2">${escapeHtml(formatDate(r.timestamp))}</td>
+          <td class="px-3 py-2 font-semibold">${escapeHtml(r.plate)}</td>
+          <td class="px-3 py-2">${escapeHtml(r.name)}</td>
+          <td class="px-3 py-2">${escapeHtml(r.reason)}</td>
+          <td class="px-3 py-2">${escapeHtml(r.location || "")}</td>
+          ${showEnforcer ? `<td class="px-3 py-2">${escapeHtml(r.enforcer || "")}</td>` : ``}
+          <td class="px-3 py-2">${statusBadge(st)}</td>
+        `;
+        const tr = document.createElement("tr");
+        tr.innerHTML = tds;
+        resultsBody.appendChild(tr);
+      }
+      resultsWrap.classList.remove("hidden");
+    }
 
     function runSearch(){
       const plateQ = plateQuery.value.trim();
@@ -251,21 +315,7 @@
         (overall === "Paid" ? "bg-green-700/70 text-green-100" : "bg-red-700/70 text-red-100");
       overallBadge.textContent = overall;
 
-      resultsBody.innerHTML = "";
-      for (const r of matches){
-        const st = normalizeStatus(r.status);
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td class="px-3 py-2">${escapeHtml(formatDate(r.timestamp))}</td>
-          <td class="px-3 py-2 font-semibold">${escapeHtml(r.plate)}</td>
-          <td class="px-3 py-2">${escapeHtml(r.name)}</td>
-          <td class="px-3 py-2">${escapeHtml(r.reason)}</td>
-          <td class="px-3 py-2">${escapeHtml(r.location || "")}</td>
-          <td class="px-3 py-2">${escapeHtml(r.enforcer || "")}</td>
-          <td class="px-3 py-2">${statusBadge(st)}</td>`;
-        resultsBody.appendChild(tr);
-      }
-      resultsWrap.classList.remove("hidden");
+      renderResults(matches);
     }
 
     function loadFromCsv(){
@@ -292,6 +342,35 @@
       });
     }
 
+    // Enforcer lock/unlock behavior
+    function updateEnforcerUI(){
+      enforcerState.textContent = showEnforcer ? "Enforcer: Visible" : "Enforcer: Hidden";
+      enforcerState.className = "text-xs rounded-full px-2 py-1 " + (showEnforcer ? "bg-green-700 text-green-100" : "bg-gray-700 text-gray-200");
+      btnUnlock.classList.toggle("hidden", showEnforcer);
+      enforcerPwd.classList.toggle("hidden", showEnforcer);
+      btnLock.classList.toggle("hidden", !showEnforcer);
+    }
+
+    btnUnlock.addEventListener("click", () => {
+      enforcerMsg.textContent = "";
+      const val = enforcerPwd.value.trim();
+      if (val === "2821"){
+        showEnforcer = true;
+        updateEnforcerUI();
+        runSearch(); // re-render with enforcer visible
+        enforcerPwd.value = "";
+      } else {
+        enforcerMsg.textContent = "Incorrect password.";
+      }
+    });
+
+    btnLock.addEventListener("click", () => {
+      showEnforcer = false;
+      updateEnforcerUI();
+      runSearch(); // re-render with enforcer hidden
+    });
+
+    // Events
     document.getElementById("btnReload").addEventListener("click", loadFromCsv);
     document.getElementById("btnSearch").addEventListener("click", runSearch);
     document.getElementById("btnClear").addEventListener("click", () => {
@@ -304,7 +383,8 @@
     plateQuery.addEventListener("keyup", e => { if (e.key==="Enter") runSearch(); });
     nameQuery.addEventListener("keyup", e => { if (e.key==="Enter") runSearch(); });
 
-    // Initial load
+    // Initial UI state + load
+    updateEnforcerUI();
     loadFromCsv();
 
     // Auto-refresh data every 30 seconds
