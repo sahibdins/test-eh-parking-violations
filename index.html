@@ -47,7 +47,7 @@
         </div>
       </div>
 
-      <!-- Overall paid/unpaid banner for current query -->
+      <!-- Overall paid/unpaid banner -->
       <div id="overallWrap" class="hidden mt-4">
         <div id="overallBadge" class="inline-flex items-center rounded-full px-3 py-1 text-sm font-medium"></div>
       </div>
@@ -91,10 +91,8 @@
   </div>
 
   <script>
-    // Your published CSV (formatting/colors don't come through in CSV)
     const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQErBNRgH1hcQYmr4hwDiMeAB1-Xwu4AT_2r2dWuWEooMXm80T4dGzhjxzG6OehqOFux2kZDHaIaW3g/pub?output=csv";
 
-    // Column aliases — now includes payment/status
     const COLS = {
       timestamp: ["timestamp","time stamp","date","date/time"],
       reason: ["reason for citation","reason","offense","offence"],
@@ -102,7 +100,7 @@
       name: ["driver's name (if known)","driver name","student name","name"],
       location: ["parking location:","location","lot"],
       enforcer: ["parking enforcer first and last name:","enforcer","issued by"],
-      status: ["status","payment status","paid","is paid","paid?"] // add one of these to your sheet
+      status: ["status","payment status","paid","is paid","paid?"]
     };
 
     let DATA = [], HEADMAP = {};
@@ -160,13 +158,11 @@
       return out;
     }
 
-    // Convert various status values to "Paid" or "Unpaid"
     function normalizeStatus(v){
       const s = String(v||"").trim().toLowerCase();
-      if (s === "true" || s === "yes" || s === "paid" || s === "paid in full" || s === "y" || s === "1") return "Paid";
-      if (s === "false" || s === "no"  || s === "unpaid" || s === "n" || s === "0") return "Unpaid";
-      // If blank or unknown, treat as Unpaid to match your “no color or red = unpaid”
-      return s ? "Unpaid" : "Unpaid";
+      if (["paid","true","yes","y","1","paid in full"].includes(s)) return "Paid";
+      if (["unpaid","false","no","n","0"].includes(s)) return "Unpaid";
+      return "Unpaid"; // default for blank or unknown
     }
 
     function statusBadge(status){
@@ -192,7 +188,6 @@
       loadStatus.textContent = "Loaded " + DATA.length + " records.";
     }
 
-    // Plate normalization for matching
     function normalizePlate(s){ return String(s||"").toUpperCase().replace(/[-\s]/g,""); }
 
     function runSearch(){
@@ -216,24 +211,19 @@
         return plateOk && nameOk;
       });
 
-      // Update counters
       statMatches.textContent = matches.length;
       statCount.textContent = matches.length;
 
-      // Compute overall status for this query:
-      // if all matching rows are Paid -> Paid; otherwise Unpaid
       let overall = "Unpaid";
       if (matches.length > 0 && matches.every(r => normalizeStatus(r.status) === "Paid")) {
         overall = "Paid";
       }
 
-      // Show banner
       overallWrap.classList.remove("hidden");
       overallBadge.className = "inline-flex items-center rounded-full px-3 py-1 text-sm font-medium " +
         (overall === "Paid" ? "bg-green-700/70 text-green-100" : "bg-red-700/70 text-red-100");
       overallBadge.textContent = overall;
 
-      // Render table
       resultsBody.innerHTML = "";
       for (const r of matches){
         const st = normalizeStatus(r.status);
@@ -287,8 +277,13 @@
     plateQuery.addEventListener("keyup", e => { if (e.key==="Enter") runSearch(); });
     nameQuery.addEventListener("keyup", e => { if (e.key==="Enter") runSearch(); });
 
-    // Auto-load
+    // Initial load
     loadFromCsv();
+
+    // Auto-refresh every 30 seconds
+    setInterval(() => {
+      loadFromCsv();
+    }, 30000);
   </script>
 </body>
 </html>
