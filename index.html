@@ -13,7 +13,7 @@
     <header class="mb-6">
       <h1 class="text-2xl font-bold text-white">Parking Violations Lookup</h1>
       <p class="text-sm text-gray-400 mt-1">
-        Enter a license plate or driver name to see violations, and filter by status.
+        Enter a license plate or driver name to see violations. Filter by status and date range.
       </p>
     </header>
 
@@ -49,15 +49,15 @@
       </div>
     </section>
 
-    <!-- Search -->
+    <!-- Search + Filters -->
     <section class="bg-gray-800 rounded-xl shadow p-4 mb-6 hidden" id="searchSection">
-      <div class="grid gap-3 md:grid-cols-4">
-        <div>
+      <div class="grid gap-3 md:grid-cols-6">
+        <div class="md:col-span-2">
           <label for="plateQuery" class="block text-sm font-medium text-gray-200 mb-2">Search by License Plate</label>
           <input id="plateQuery" type="text" placeholder="e.g., KS2-447"
                  class="w-full rounded-lg border border-gray-600 bg-gray-900 text-gray-100 px-3 py-2 focus:outline-none focus:ring focus:ring-emerald-500" />
         </div>
-        <div>
+        <div class="md:col-span-2">
           <label for="nameQuery" class="block text-sm font-medium text-gray-200 mb-2">Search by Driver Name</label>
           <input id="nameQuery" type="text" placeholder="e.g., John Doe"
                  class="w-full rounded-lg border border-gray-600 bg-gray-900 text-gray-100 px-3 py-2 focus:outline-none focus:ring focus:ring-emerald-500" />
@@ -74,6 +74,24 @@
         <div class="flex items-end gap-2">
           <button id="btnSearch" class="w-full md:w-auto rounded-lg bg-blue-600 text-white px-4 py-2 font-medium hover:bg-blue-700">Search</button>
           <button id="btnClear"  class="w-full md:w-auto rounded-lg bg-gray-600 text-gray-100 px-4 py-2 font-medium hover:bg-gray-500">Clear</button>
+        </div>
+      </div>
+
+      <!-- Date range row -->
+      <div class="grid gap-3 md:grid-cols-6 mt-3">
+        <div class="md:col-span-2">
+          <label for="dateFrom" class="block text-sm font-medium text-gray-200 mb-2">From (date)</label>
+          <input id="dateFrom" type="date"
+                 class="w-full rounded-lg border border-gray-600 bg-gray-900 text-gray-100 px-3 py-2 focus:outline-none focus:ring focus:ring-emerald-500" />
+        </div>
+        <div class="md:col-span-2">
+          <label for="dateTo" class="block text-sm font-medium text-gray-200 mb-2">To (date)</label>
+          <input id="dateTo" type="date"
+                 class="w-full rounded-lg border border-gray-600 bg-gray-900 text-gray-100 px-3 py-2 focus:outline-none focus:ring focus:ring-emerald-500" />
+        </div>
+        <div class="md:col-span-2 flex items-end gap-2">
+          <button id="btnApplyDates" class="w-full md:w-auto rounded-lg bg-purple-600 text-white px-4 py-2 font-medium hover:bg-purple-700">Apply Dates</button>
+          <button id="btnClearDates" class="w-full md:w-auto rounded-lg bg-gray-600 text-gray-100 px-4 py-2 font-medium hover:bg-gray-500">Clear Dates</button>
         </div>
       </div>
 
@@ -148,6 +166,8 @@
     const plateQuery  = document.getElementById("plateQuery");
     const nameQuery   = document.getElementById("nameQuery");
     const statusFilter= document.getElementById("statusFilter");
+    const dateFromEl  = document.getElementById("dateFrom");
+    const dateToEl    = document.getElementById("dateTo");
     const overallWrap = document.getElementById("overallWrap");
     const overallBadge= document.getElementById("overallBadge");
 
@@ -168,6 +188,7 @@
       return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
     }
 
+    // "ago" display for last updated
     function fmtAgo(ms){
       const s = Math.floor(ms/1000);
       if (s < 60) return `${s}s ago`;
@@ -267,6 +288,26 @@
 
     function normalizePlate(s){ return String(s||"").toUpperCase().replace(/[-\s]/g,""); }
 
+    // Date helpers
+    function parseDateOnlyInput(value){ // "YYYY-MM-DD" -> Date at local midnight
+      if (!value) return null;
+      const [y,m,d] = value.split("-").map(n => parseInt(n,10));
+      if (!y || !m || !d) return null;
+      return new Date(y, m-1, d, 0, 0, 0, 0);
+    }
+    function startOfDay(d){ return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0,0,0,0); }
+    function endOfDay(d){   return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23,59,59,999); }
+
+    function recordInDateRange(recTs, fromDate, toDate){
+      if (!fromDate && !toDate) return true; // no filter
+      const d = new Date(recTs);
+      if (isNaN(d)) return false; // if filter is set but timestamp not parseable, exclude
+      const t = d.getTime();
+      if (fromDate && t < startOfDay(fromDate).getTime()) return false;
+      if (toDate   && t > endOfDay(toDate).getTime())   return false;
+      return true;
+    }
+
     function renderResults(matches){
       renderHeader();
 
@@ -293,8 +334,10 @@
       const plateQ = plateQuery.value.trim();
       const nameQ  = nameQuery.value.trim();
       const statusF = statusFilter.value; // 'all' | 'paid' | 'unpaid'
+      const fromD = parseDateOnlyInput(dateFromEl.value);
+      const toD   = parseDateOnlyInput(dateToEl.value);
 
-      if (!plateQ && !nameQ && statusF === 'all'){
+      if (!plateQ && !nameQ && statusF === 'all' && !fromD && !toD){
         resultsWrap.classList.add("hidden");
         overallWrap.classList.add("hidden");
         statMatches.textContent = 0;
@@ -307,13 +350,16 @@
       const lcNameQ = nameQ.toLowerCase();
 
       const matches = DATA.filter(r => {
-        let plateOk = true, nameOk = true, statusOk = true;
+        let plateOk = true, nameOk = true, statusOk = true, dateOk = true;
         if (plateQ) plateOk = normalizePlate(r.plate).includes(normPlateQ);
         if (nameQ)  nameOk  = String(r.name||"").toLowerCase().includes(lcNameQ);
         if (statusF !== 'all') {
           statusOk = normalizeStatus(r.status) === (statusF === 'paid' ? 'Paid' : 'Unpaid');
         }
-        return plateOk && nameOk && statusOk;
+        if (fromD || toD) {
+          dateOk = recordInDateRange(r.timestamp, fromD, toD);
+        }
+        return plateOk && nameOk && statusOk && dateOk;
       });
 
       // Stats reflect current filters
@@ -391,6 +437,8 @@
     document.getElementById("btnClear").addEventListener("click", () => {
       plateQuery.value=""; nameQuery.value="";
       statusFilter.value="all";
+      dateFromEl.value = "";
+      dateToEl.value = "";
       resultsBody.innerHTML="";
       resultsWrap.classList.add("hidden");
       overallWrap.classList.add("hidden");
@@ -399,6 +447,10 @@
     plateQuery.addEventListener("keyup", e => { if (e.key==="Enter") runSearch(); });
     nameQuery.addEventListener("keyup", e => { if (e.key==="Enter") runSearch(); });
     statusFilter.addEventListener("change", runSearch);
+    document.getElementById("btnApplyDates").addEventListener("click", runSearch);
+    document.getElementById("btnClearDates").addEventListener("click", () => { dateFromEl.value = ""; dateToEl.value = ""; runSearch(); });
+    dateFromEl.addEventListener("change", () => {}); // optional: only apply on button
+    dateToEl.addEventListener("change", () => {});   // optional: only apply on button
 
     // Initial UI state + load
     updateEnforcerUI();
