@@ -9,7 +9,33 @@
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 </head>
 <body class="bg-gray-900 text-gray-100">
-  <div class="max-w-5xl mx-auto p-6">
+
+  <!-- ACCESS GATE OVERLAY (shown outside allowed hours unless admin override) -->
+  <div id="accessGate" class="fixed inset-0 z-50 hidden">
+    <div class="absolute inset-0 bg-black/80"></div>
+    <div class="relative z-10 h-full w-full flex items-center justify-center p-4">
+      <div class="w-full max-w-md bg-gray-800 rounded-xl shadow-lg p-6">
+        <h2 class="text-xl font-semibold text-white">Access Restricted</h2>
+        <p class="text-sm text-gray-300 mt-2">
+          This site is available between <span class="font-medium">7:45 AM</span> and
+          <span class="font-medium">3:15 PM</span> Eastern. Please try again during those hours.
+        </p>
+        <div class="mt-5">
+          <label for="gatePwd" class="block text-sm text-gray-200 mb-2">Admin override password</label>
+          <input id="gatePwd" type="password" placeholder="Enter password"
+                 class="w-full rounded-lg border border-gray-600 bg-gray-900 text-gray-100 px-3 py-2 focus:outline-none focus:ring focus:ring-emerald-500" />
+          <button id="gateUnlock"
+                  class="mt-3 w-full rounded-lg bg-blue-600 text-white px-4 py-2 text-sm font-medium hover:bg-blue-700">
+            Unlock
+          </button>
+          <div id="gateMsg" class="text-xs text-red-400 mt-2"></div>
+        </div>
+        <div class="mt-4 text-xs text-gray-400" id="gateNow"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="max-w-5xl mx-auto p-6" id="appRoot">
     <header class="mb-6">
       <h1 class="text-2xl font-bold text-white">Parking Violations Lookup</h1>
       <p class="text-sm text-gray-400 mt-1">
@@ -155,6 +181,9 @@
     let lastFetchTime = null;
     let showEnforcer = false; // hidden by default
 
+    // ACCESS GATE state
+    let adminOverride = false;
+
     const loadStatus  = document.getElementById("loadStatus");
     const lastUpdated = document.getElementById("lastUpdated");
     const searchSection = document.getElementById("searchSection");
@@ -178,6 +207,13 @@
     const enforcerMsg  = document.getElementById("enforcerMsg");
     const enforcerState= document.getElementById("enforcerState");
     const headerRow    = document.getElementById("resultsHeaderRow");
+
+    // Access gate controls
+    const accessGate = document.getElementById("accessGate");
+    const gatePwd    = document.getElementById("gatePwd");
+    const gateUnlock = document.getElementById("gateUnlock");
+    const gateMsg    = document.getElementById("gateMsg");
+    const gateNow    = document.getElementById("gateNow");
 
     function norm(s){ return String(s||"").trim(); }
     function escapeHtml(s){ return String(s||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#39;"); }
@@ -431,7 +467,76 @@
       runSearch(); // re-render with enforcer hidden
     });
 
-    // Events
+    // ===== Access Gate (time restriction in America/New_York) =====
+    // Allowed window: 07:45 to 15:15 (inclusive) in America/New_York
+    function nyNowParts(){
+      const fmt = new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/New_York",
+        hour12: false,
+        year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", second: "2-digit"
+      });
+      const parts = fmt.formatToParts(new Date());
+      const map = Object.fromEntries(parts.map(p => [p.type, p.value]));
+      return {
+        y: parseInt(map.year,10),
+        m: parseInt(map.month,10),
+        d: parseInt(map.day,10),
+        hh: parseInt(map.hour,10),
+        mm: parseInt(map.minute,10),
+        ss: parseInt(map.second,10),
+        label: `${map.month}/${map.day}/${map.year} ${map.hour}:${map.minute}:${map.second} ET`
+      };
+    }
+    function nyMinutesSinceMidnight(){
+      const p = nyNowParts();
+      return p.hh * 60 + p.mm;
+    }
+    function withinAllowedWindow(){
+      const mins = nyMinutesSinceMidnight();
+      const start = 7*60 + 45;  // 07:45
+      const end   = 15*60 + 15; // 15:15
+      return mins >= start && mins <= end;
+    }
+    function updateGateNowLabel(){
+      const p = nyNowParts();
+      gateNow.textContent = `Current time: ${p.label}`;
+    }
+    function showGate(){
+      accessGate.classList.remove("hidden");
+      updateGateNowLabel();
+    }
+    function hideGate(){
+      accessGate.classList.add("hidden");
+    }
+    function checkAccessGate(){
+      if (adminOverride) { hideGate(); return; }
+      if (withinAllowedWindow()) {
+        hideGate();
+      } else {
+        showGate();
+      }
+    }
+
+    gateUnlock.addEventListener("click", () => {
+      gateMsg.textContent = "";
+      const val = gatePwd.value.trim();
+      if (val === "2821") {
+        adminOverride = true;
+        sessionStorage.setItem("adminOverride", "1");
+        hideGate();
+        gatePwd.value = "";
+      } else {
+        gateMsg.textContent = "Incorrect password.";
+      }
+    });
+
+    // Load persisted override for this browser tab/session
+    if (sessionStorage.getItem("adminOverride") === "1") {
+      adminOverride = true;
+    }
+
+    // ===== Events =====
     document.getElementById("btnReload").addEventListener("click", loadFromCsv);
     document.getElementById("btnSearch").addEventListener("click", runSearch);
     document.getElementById("btnClear").addEventListener("click", () => {
@@ -449,20 +554,21 @@
     statusFilter.addEventListener("change", runSearch);
     document.getElementById("btnApplyDates").addEventListener("click", runSearch);
     document.getElementById("btnClearDates").addEventListener("click", () => { dateFromEl.value = ""; dateToEl.value = ""; runSearch(); });
-    dateFromEl.addEventListener("change", () => {}); // optional: only apply on button
-    dateToEl.addEventListener("change", () => {});   // optional: only apply on button
 
     // Initial UI state + load
     updateEnforcerUI();
     loadFromCsv();
 
     // Auto-refresh data every 30 seconds
-    setInterval(() => {
-      loadFromCsv();
-    }, 30000);
+    setInterval(() => { loadFromCsv(); }, 30000);
 
     // Update "last updated" display every second
     setInterval(updateLastUpdatedDisplay, 1000);
+
+    // Access gate checks
+    checkAccessGate();                    // on load
+    setInterval(checkAccessGate, 30*1000); // re-check every 30s
+    setInterval(updateGateNowLabel, 1000); // update the clock text on the gate
   </script>
 </body>
 </html>
