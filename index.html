@@ -39,11 +39,11 @@
     <header class="mb-6">
       <h1 class="text-2xl font-bold text-white">Parking Violations Lookup</h1>
       <p class="text-sm text-gray-400 mt-1">
-        Enter a license plate or driver name to see violations. Filter by status, date range, and parking lot.
+        Enter a license plate or driver name to see violations.
       </p>
     </header>
 
-    <!-- Status + Refresh + Enforcer Lock -->
+    <!-- Status + Refresh + Admin Lock -->
     <section class="bg-gray-800 rounded-xl shadow p-4 mb-6">
       <div class="flex flex-col gap-3">
         <div class="flex items-center justify-between gap-4">
@@ -61,9 +61,9 @@
           </button>
         </div>
 
-        <!-- Enforcer Lock Controls -->
+        <!-- Admin controls: unlock also reveals advanced filters and enforcer column -->
         <div class="flex flex-wrap items-center gap-2">
-          <span id="enforcerState" class="text-xs rounded-full px-2 py-1 bg-gray-700 text-gray-200">Enforcer: Hidden</span>
+          <span id="adminState" class="text-xs rounded-full px-2 py-1 bg-gray-700 text-gray-200">Admin: Locked</span>
           <input id="enforcerPwd" type="password" placeholder="Enter password"
                  class="rounded-lg border border-gray-600 bg-gray-900 text-gray-100 px-3 py-2 text-sm focus:outline-none focus:ring focus:ring-emerald-500" />
           <button id="btnUnlock"
@@ -82,51 +82,58 @@
     <!-- Search + Filters -->
     <section class="bg-gray-800 rounded-xl shadow p-4 mb-6 hidden" id="searchSection">
       <div class="grid gap-3 md:grid-cols-6">
-        <div class="md:col-span-2">
+        <div class="md:col-span-3">
           <label for="plateQuery" class="block text-sm font-medium text-gray-200 mb-2">Search by License Plate</label>
           <input id="plateQuery" type="text" placeholder="e.g., KS2-447"
                  class="w-full rounded-lg border border-gray-600 bg-gray-900 text-gray-100 px-3 py-2 focus:outline-none focus:ring focus:ring-emerald-500" />
         </div>
-        <div class="md:col-span-2">
+        <div class="md:col-span-3">
           <label for="nameQuery" class="block text-sm font-medium text-gray-200 mb-2">Search by Driver Name</label>
           <input id="nameQuery" type="text" placeholder="e.g., John Doe"
                  class="w-full rounded-lg border border-gray-600 bg-gray-900 text-gray-100 px-3 py-2 focus:outline-none focus:ring focus:ring-emerald-500" />
         </div>
-        <div>
-          <label for="statusFilter" class="block text-sm font-medium text-gray-200 mb-2">Filter by Status</label>
-          <select id="statusFilter"
-                  class="w-full rounded-lg border border-gray-600 bg-gray-900 text-gray-100 px-3 py-2 focus:outline-none focus:ring focus:ring-emerald-500">
-            <option value="all">All</option>
-            <option value="paid">Paid</option>
-            <option value="unpaid">Unpaid</option>
-          </select>
+      </div>
+
+      <!-- Advanced filters: hidden until admin unlock -->
+      <div id="advancedFilters" class="hidden">
+        <div class="grid gap-3 md:grid-cols-6 mt-3">
+          <div>
+            <label for="statusFilter" class="block text-sm font-medium text-gray-200 mb-2">Filter by Status</label>
+            <select id="statusFilter"
+                    class="w-full rounded-lg border border-gray-600 bg-gray-900 text-gray-100 px-3 py-2 focus:outline-none focus:ring focus:ring-emerald-500">
+              <option value="all">All</option>
+              <option value="paid">Paid</option>
+              <option value="unpaid">Unpaid</option>
+            </select>
+          </div>
+          <div>
+            <label for="lotFilter" class="block text-sm font-medium text-gray-200 mb-2">Filter by Parking Lot</label>
+            <select id="lotFilter"
+                    class="w-full rounded-lg border border-gray-600 bg-gray-900 text-gray-100 px-3 py-2 focus:outline-none focus:ring focus:ring-emerald-500">
+              <option value="all">All lots</option>
+            </select>
+          </div>
         </div>
-        <div>
-          <label for="lotFilter" class="block text-sm font-medium text-gray-200 mb-2">Filter by Parking Lot</label>
-          <select id="lotFilter"
-                  class="w-full rounded-lg border border-gray-600 bg-gray-900 text-gray-100 px-3 py-2 focus:outline-none focus:ring focus:ring-emerald-500">
-            <option value="all">All lots</option>
-          </select>
+
+        <!-- Date range row -->
+        <div class="grid gap-3 md:grid-cols-6 mt-3">
+          <div class="md:col-span-2">
+            <label for="dateFrom" class="block text-sm font-medium text-gray-200 mb-2">From (date)</label>
+            <input id="dateFrom" type="date"
+                   class="w-full rounded-lg border border-gray-600 bg-gray-900 text-gray-100 px-3 py-2 focus:outline-none focus:ring focus:ring-emerald-500" />
+          </div>
+          <div class="md:col-span-2">
+            <label for="dateTo" class="block text-sm font-medium text-gray-200 mb-2">To (date)</label>
+            <input id="dateTo" type="date"
+                   class="w-full rounded-lg border border-gray-600 bg-gray-900 text-gray-100 px-3 py-2 focus:outline-none focus:ring focus:ring-emerald-500" />
+          </div>
         </div>
       </div>
 
-      <!-- Date range row -->
-      <div class="grid gap-3 md:grid-cols-6 mt-3">
-        <div class="md:col-span-2">
-          <label for="dateFrom" class="block text-sm font-medium text-gray-200 mb-2">From (date)</label>
-          <input id="dateFrom" type="date"
-                 class="w-full rounded-lg border border-gray-600 bg-gray-900 text-gray-100 px-3 py-2 focus:outline-none focus:ring focus:ring-emerald-500" />
-        </div>
-        <div class="md:col-span-2">
-          <label for="dateTo" class="block text-sm font-medium text-gray-200 mb-2">To (date)</label>
-          <input id="dateTo" type="date"
-                 class="w-full rounded-lg border border-gray-600 bg-gray-900 text-gray-100 px-3 py-2 focus:outline-none focus:ring focus:ring-emerald-500" />
-        </div>
-        <div class="md:col-span-2 flex items-end gap-2">
-          <button id="btnSearch" class="w-full md:w-auto rounded-lg bg-blue-600 text-white px-4 py-2 font-medium hover:bg-blue-700">Search</button>
-          <button id="btnApplyDates" class="w-full md:w-auto rounded-lg bg-purple-600 text-white px-4 py-2 font-medium hover:bg-purple-700">Apply Dates</button>
-          <button id="btnClear"  class="w-full md:w-auto rounded-lg bg-gray-600 text-gray-100 px-4 py-2 font-medium hover:bg-gray-500">Clear</button>
-        </div>
+      <div class="mt-4 flex flex-wrap gap-2">
+        <button id="btnSearch" class="rounded-lg bg-blue-600 text-white px-4 py-2 font-medium hover:bg-blue-700">Search</button>
+        <button id="btnApplyDates" class="rounded-lg bg-purple-600 text-white px-4 py-2 font-medium hover:bg-purple-700">Apply Dates</button>
+        <button id="btnClear"  class="rounded-lg bg-gray-600 text-gray-100 px-4 py-2 font-medium hover:bg-gray-500">Clear</button>
       </div>
 
       <!-- Overall paid/unpaid banner -->
@@ -162,7 +169,7 @@
               <th class="text-left px-3 py-2">Driver Name</th>
               <th class="text-left px-3 py-2">Reason for Citation</th>
               <th class="text-left px-3 py-2">Location</th>
-              <!-- Enforcer header inserted if unlocked -->
+              <!-- Enforcer header inserted if admin unlocked -->
               <th class="text-left px-3 py-2">Status</th>
             </tr>
           </thead>
@@ -188,8 +195,12 @@
 
     let DATA = [], HEADMAP = {};
     let lastFetchTime = null;
-    let showEnforcer = false; // hidden by default
-    let adminOverride = false; // access gate override
+
+    // Admin state also controls enforcer column and advanced filters visibility
+    let isAdmin = false;
+
+    // ACCESS GATE state (time-based overlay)
+    let adminOverride = false;
 
     const loadStatus  = document.getElementById("loadStatus");
     const errDetails  = document.getElementById("errDetails");
@@ -209,13 +220,14 @@
     const dateToEl    = document.getElementById("dateTo");
     const overallWrap = document.getElementById("overallWrap");
     const overallBadge= document.getElementById("overallBadge");
+    const advancedFilters = document.getElementById("advancedFilters");
 
-    // Enforcer lock controls
+    // Admin controls
     const enforcerPwd  = document.getElementById("enforcerPwd");
     const btnUnlock    = document.getElementById("btnUnlock");
     const btnLock      = document.getElementById("btnLock");
     const enforcerMsg  = document.getElementById("enforcerMsg");
-    const enforcerState= document.getElementById("enforcerState");
+    const adminState   = document.getElementById("adminState");
     const headerRow    = document.getElementById("resultsHeaderRow");
 
     // Access gate controls
@@ -302,7 +314,7 @@
         <th class="text-left px-3 py-2">Driver Name</th>
         <th class="text-left px-3 py-2">Reason for Citation</th>
         <th class="text-left px-3 py-2">Location</th>
-        ${showEnforcer ? '<th class="text-left px-3 py-2">Enforcer</th>' : ''}
+        ${isAdmin ? '<th class="text-left px-3 py-2">Enforcer</th>' : ''}
         <th class="text-left px-3 py-2">Status</th>
       `;
     }
@@ -372,7 +384,7 @@
           <td class="px-3 py-2">${escapeHtml(r.name)}</td>
           <td class="px-3 py-2">${escapeHtml(r.reason)}</td>
           <td class="px-3 py-2">${escapeHtml(r.location || "")}</td>
-          ${showEnforcer ? `<td class="px-3 py-2">${escapeHtml(r.enforcer || "")}</td>` : ``}
+          ${isAdmin ? `<td class="px-3 py-2">${escapeHtml(r.enforcer || "")}</td>` : ``}
           <td class="px-3 py-2">${statusBadge(st)}</td>
         `;
         const tr = document.createElement("tr");
@@ -385,10 +397,12 @@
     function runSearch(){
       const plateQ = plateQuery.value.trim();
       const nameQ  = nameQuery.value.trim();
-      const statusF = statusFilter.value;
-      const lotF = lotFilter.value;
-      const fromD = parseDateOnlyInput(dateFromEl.value);
-      const toD   = parseDateOnlyInput(dateToEl.value);
+
+      // Advanced filters only apply when admin is unlocked
+      const statusF = isAdmin ? statusFilter.value : 'all';
+      const lotF    = isAdmin ? lotFilter.value    : 'all';
+      const fromD   = isAdmin ? parseDateOnlyInput(dateFromEl.value) : null;
+      const toD     = isAdmin ? parseDateOnlyInput(dateToEl.value)   : null;
 
       if (!plateQ && !nameQ && statusF === 'all' && lotF === 'all' && !fromD && !toD){
         resultsWrap.classList.add("hidden");
@@ -449,7 +463,7 @@
       errText.textContent = String(err && err.stack ? err.stack : err);
     }
 
-    // New robust loader with fetch + cache-bust + Papa.parse(text)
+    // Robust loader with fetch + cache-bust + Papa.parse(text)
     async function loadFromCsv(){
       loadStatus.className="text-sm text-gray-400";
       loadStatus.textContent="Fetching data...";
@@ -458,14 +472,10 @@
 
       try {
         const res = await fetch(CSV_URL(), { cache: "no-store", mode: "cors" });
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status} ${res.statusText}`);
-        }
+        if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
         const csvText = await res.text();
         const parsed = Papa.parse(csvText, { skipEmptyLines: true });
-        if (parsed.errors && parsed.errors.length) {
-          throw new Error(parsed.errors.map(e => e.message).join("; "));
-        }
+        if (parsed.errors && parsed.errors.length) throw new Error(parsed.errors.map(e => e.message).join("; "));
         const rows = (parsed.data||[]).filter(r => Array.isArray(r) && r.some(c => String(c||"").trim()!==""));
         if (!rows.length) throw new Error("CSV appears empty.");
         const headers = rows[0].map(norm);
@@ -479,21 +489,43 @@
       }
     }
 
-    // Enforcer lock/unlock
-    function updateEnforcerUI(){
-      enforcerState.textContent = showEnforcer ? "Enforcer: Visible" : "Enforcer: Hidden";
-      enforcerState.className = "text-xs rounded-full px-2 py-1 " + (showEnforcer ? "bg-green-700 text-green-100" : "bg-gray-700 text-gray-200");
-      btnUnlock.classList.toggle("hidden", showEnforcer);
-      enforcerPwd.classList.toggle("hidden", showEnforcer);
-      btnLock.classList.toggle("hidden", !showEnforcer);
+    // Admin lock/unlock behavior
+    function updateAdminUI(){
+      adminState.textContent = isAdmin ? "Admin: Unlocked" : "Admin: Locked";
+      adminState.className = "text-xs rounded-full px-2 py-1 " + (isAdmin ? "bg-green-700 text-green-100" : "bg-gray-700 text-gray-200");
+      btnUnlock.classList.toggle("hidden", isAdmin);
+      enforcerPwd.classList.toggle("hidden", isAdmin);
+      btnLock.classList.toggle("hidden", !isAdmin);
+
+      // show/hide advanced filters
+      advancedFilters.classList.toggle("hidden", !isAdmin);
+      // rerender header so Enforcer column appears/disappears
+      renderHeader();
     }
+
     btnUnlock.addEventListener("click", () => {
       enforcerMsg.textContent = "";
       const val = enforcerPwd.value.trim();
-      if (val === "2821"){ showEnforcer = true; updateEnforcerUI(); runSearch(); enforcerPwd.value=""; }
-      else { enforcerMsg.textContent = "Incorrect password."; }
+      if (val === "002821"){
+        isAdmin = true;
+        updateAdminUI();
+        runSearch(); // re-render with admin filters + enforcer visible
+        enforcerPwd.value = "";
+      } else {
+        enforcerMsg.textContent = "Incorrect password.";
+      }
     });
-    btnLock.addEventListener("click", () => { showEnforcer = false; updateEnforcerUI(); runSearch(); });
+
+    btnLock.addEventListener("click", () => {
+      isAdmin = false;
+      // clear advanced filters when relocking
+      statusFilter.value = "all";
+      lotFilter.value = "all";
+      dateFromEl.value = "";
+      dateToEl.value = "";
+      updateAdminUI();
+      runSearch(); // re-render with admin features hidden
+    });
 
     // ===== Access Gate (time restriction in America/New_York) =====
     function nyNowParts(){
@@ -524,8 +556,14 @@
     gateUnlock.addEventListener("click", () => {
       gateMsg.textContent = "";
       const val = gatePwd.value.trim();
-      if (val === "2821") { adminOverride = true; sessionStorage.setItem("adminOverride","1"); hideGate(); gatePwd.value=""; }
-      else { gateMsg.textContent = "Incorrect password."; }
+      if (val === "002821") {
+        adminOverride = true;
+        sessionStorage.setItem("adminOverride","1");
+        hideGate();
+        gatePwd.value = "";
+      } else {
+        gateMsg.textContent = "Incorrect password.";
+      }
     });
     if (sessionStorage.getItem("adminOverride") === "1") adminOverride = true;
 
@@ -550,9 +588,9 @@
     nameQuery.addEventListener("keyup", e => { if (e.key==="Enter") runSearch(); });
 
     // Init
-    updateEnforcerUI();
-    loadFromCsv();                 // first load
-    setInterval(loadFromCsv, 60000); // auto-refresh every 1 minute
+    updateAdminUI();           // start locked, hide advanced filters + enforcer col
+    loadFromCsv();             // first load
+    setInterval(loadFromCsv, 60000);   // auto-refresh every 1 minute
     setInterval(updateLastUpdatedDisplay, 1000);
     checkAccessGate();
     setInterval(checkAccessGate, 30000);
