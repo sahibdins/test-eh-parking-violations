@@ -20,7 +20,10 @@
     <!-- Status -->
     <section class="bg-gray-800 rounded-xl shadow p-4 mb-6">
       <div class="flex items-center justify-between gap-4">
-        <div id="loadStatus" class="text-sm text-gray-400">Loading data...</div>
+        <div>
+          <div id="loadStatus" class="text-sm text-gray-400">Loading data...</div>
+          <div id="lastUpdated" class="text-xs text-gray-500 mt-1"></div>
+        </div>
         <button id="btnReload"
                 class="rounded-lg bg-emerald-600 text-white px-4 py-2 text-sm font-medium hover:bg-emerald-700">
           Reload
@@ -104,8 +107,10 @@
     };
 
     let DATA = [], HEADMAP = {};
+    let lastFetchTime = null;
 
     const loadStatus  = document.getElementById("loadStatus");
+    const lastUpdated = document.getElementById("lastUpdated");
     const searchSection = document.getElementById("searchSection");
     const resultsWrap = document.getElementById("resultsWrap");
     const resultsBody = document.getElementById("resultsBody");
@@ -124,6 +129,25 @@
       if (isNaN(d)) return s||"";
       const pad=n=>String(n).padStart(2,"0");
       return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+
+    function fmtAgo(ms){
+      const s = Math.floor(ms/1000);
+      if (s < 60) return `${s}s ago`;
+      const m = Math.floor(s/60);
+      if (m < 60) return `${m}m ${s%60}s ago`;
+      const h = Math.floor(m/60);
+      return `${h}h ${m%60}m ago`;
+    }
+    function updateLastUpdatedDisplay(){
+      if (!lastFetchTime) {
+        lastUpdated.textContent = "";
+        return;
+      }
+      const now = new Date();
+      const ago = now - lastFetchTime;
+      const fullDate = lastFetchTime.toLocaleString(); // full date + time
+      lastUpdated.textContent = `Last updated: ${fullDate} (${fmtAgo(ago)})`;
     }
 
     function findKey(header){
@@ -162,7 +186,7 @@
       const s = String(v||"").trim().toLowerCase();
       if (["paid","true","yes","y","1","paid in full"].includes(s)) return "Paid";
       if (["unpaid","false","no","n","0"].includes(s)) return "Unpaid";
-      return "Unpaid"; // default for blank or unknown
+      return "Unpaid";
     }
 
     function statusBadge(status){
@@ -186,6 +210,9 @@
       resultsWrap.classList.add("hidden");
       loadStatus.className="text-sm text-green-400";
       loadStatus.textContent = "Loaded " + DATA.length + " records.";
+
+      lastFetchTime = new Date();
+      updateLastUpdatedDisplay();
     }
 
     function normalizePlate(s){ return String(s||"").toUpperCase().replace(/[-\s]/g,""); }
@@ -280,10 +307,13 @@
     // Initial load
     loadFromCsv();
 
-    // Auto-refresh every 30 seconds
+    // Auto-refresh data every 30 seconds
     setInterval(() => {
       loadFromCsv();
     }, 30000);
+
+    // Update "last updated" display every second
+    setInterval(updateLastUpdatedDisplay, 1000);
   </script>
 </body>
 </html>
