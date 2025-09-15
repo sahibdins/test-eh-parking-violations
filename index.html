@@ -7,10 +7,27 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <style>
+    /* subtle toast */
+    #toast {
+      position: fixed;
+      bottom: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(31, 41, 55, 0.95);
+      color: #e5e7eb;
+      border: 1px solid rgba(75, 85, 99, 0.7);
+      padding: 8px 12px;
+      border-radius: 10px;
+      font-size: 12px;
+      z-index: 10000;
+      display: none;
+    }
+  </style>
 </head>
 <body class="bg-gray-900 text-gray-100">
 
-  <!-- ACCESS GATE OVERLAY (shown outside allowed hours unless admin override) -->
+  <!-- ACCESS GATE OVERLAY (outside allowed hours unless admin override) -->
   <div id="accessGate" class="fixed inset-0 z-50 hidden">
     <div class="absolute inset-0 bg-black/80"></div>
     <div class="relative z-10 h-full w-full flex items-center justify-center p-4">
@@ -34,6 +51,9 @@
       </div>
     </div>
   </div>
+
+  <!-- toast -->
+  <div id="toast" role="status" aria-live="polite"></div>
 
   <div class="max-w-5xl mx-auto p-6" id="appRoot">
     <header class="mb-6">
@@ -180,9 +200,7 @@
     let DATA = [], HEADMAP = {};
     let lastFetchTime = null;
     let showEnforcer = false; // hidden by default
-
-    // ACCESS GATE state
-    let adminOverride = false;
+    let adminOverride = false; // access gate override
 
     const loadStatus  = document.getElementById("loadStatus");
     const lastUpdated = document.getElementById("lastUpdated");
@@ -215,6 +233,16 @@
     const gateMsg    = document.getElementById("gateMsg");
     const gateNow    = document.getElementById("gateNow");
 
+    // toast
+    const toastEl = document.getElementById("toast");
+    let toastTimer = null;
+    function showToast(msg){
+      toastEl.textContent = msg;
+      toastEl.style.display = "block";
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => { toastEl.style.display = "none"; }, 1500);
+    }
+
     function norm(s){ return String(s||"").trim(); }
     function escapeHtml(s){ return String(s||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#39;"); }
     function formatDate(s){
@@ -224,7 +252,6 @@
       return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
     }
 
-    // "ago" display for last updated
     function fmtAgo(ms){
       const s = Math.floor(ms/1000);
       if (s < 60) return `${s}s ago`;
@@ -291,7 +318,6 @@
       return `<span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${classes}">${status}</span>`;
     }
 
-    // Build header row according to showEnforcer
     function renderHeader(){
       headerRow.innerHTML = `
         <th class="text-left px-3 py-2">Timestamp</th>
@@ -325,7 +351,7 @@
     function normalizePlate(s){ return String(s||"").toUpperCase().replace(/[-\s]/g,""); }
 
     // Date helpers
-    function parseDateOnlyInput(value){ // "YYYY-MM-DD" -> Date at local midnight
+    function parseDateOnlyInput(value){
       if (!value) return null;
       const [y,m,d] = value.split("-").map(n => parseInt(n,10));
       if (!y || !m || !d) return null;
@@ -335,9 +361,9 @@
     function endOfDay(d){   return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23,59,59,999); }
 
     function recordInDateRange(recTs, fromDate, toDate){
-      if (!fromDate && !toDate) return true; // no filter
+      if (!fromDate && !toDate) return true;
       const d = new Date(recTs);
-      if (isNaN(d)) return false; // if filter is set but timestamp not parseable, exclude
+      if (isNaN(d)) return false;
       const t = d.getTime();
       if (fromDate && t < startOfDay(fromDate).getTime()) return false;
       if (toDate   && t > endOfDay(toDate).getTime())   return false;
@@ -346,7 +372,6 @@
 
     function renderResults(matches){
       renderHeader();
-
       resultsBody.innerHTML = "";
       for (const r of matches){
         const st = normalizeStatus(r.status);
@@ -398,11 +423,9 @@
         return plateOk && nameOk && statusOk && dateOk;
       });
 
-      // Stats reflect current filters
       statMatches.textContent = matches.length;
       statCount.textContent = matches.length;
 
-      // Overall badge: Paid only if ALL matches are Paid
       let overall = "Unpaid";
       if (matches.length > 0 && matches.every(r => normalizeStatus(r.status) === "Paid")) {
         overall = "Paid";
@@ -439,7 +462,7 @@
       });
     }
 
-    // Enforcer lock/unlock behavior
+    // Enforcer lock/unlock UI
     function updateEnforcerUI(){
       enforcerState.textContent = showEnforcer ? "Enforcer: Visible" : "Enforcer: Hidden";
       enforcerState.className = "text-xs rounded-full px-2 py-1 " + (showEnforcer ? "bg-green-700 text-green-100" : "bg-gray-700 text-gray-200");
@@ -454,7 +477,7 @@
       if (val === "2821"){
         showEnforcer = true;
         updateEnforcerUI();
-        runSearch(); // re-render with enforcer visible
+        runSearch();
         enforcerPwd.value = "";
       } else {
         enforcerMsg.textContent = "Incorrect password.";
@@ -464,11 +487,10 @@
     btnLock.addEventListener("click", () => {
       showEnforcer = false;
       updateEnforcerUI();
-      runSearch(); // re-render with enforcer hidden
+      runSearch();
     });
 
     // ===== Access Gate (time restriction in America/New_York) =====
-    // Allowed window: 07:45 to 15:15 (inclusive) in America/New_York
     function nyNowParts(){
       const fmt = new Intl.DateTimeFormat("en-US", {
         timeZone: "America/New_York",
@@ -511,11 +533,7 @@
     }
     function checkAccessGate(){
       if (adminOverride) { hideGate(); return; }
-      if (withinAllowedWindow()) {
-        hideGate();
-      } else {
-        showGate();
-      }
+      if (withinAllowedWindow()) hideGate(); else showGate();
     }
 
     gateUnlock.addEventListener("click", () => {
@@ -530,11 +548,31 @@
         gateMsg.textContent = "Incorrect password.";
       }
     });
+    if (sessionStorage.getItem("adminOverride") === "1") adminOverride = true;
 
-    // Load persisted override for this browser tab/session
-    if (sessionStorage.getItem("adminOverride") === "1") {
-      adminOverride = true;
-    }
+    // ===== Deterrents: block right-click and common inspect shortcuts =====
+    document.addEventListener("contextmenu", function(e){
+      e.preventDefault();
+      showToast("Action disabled");
+    });
+
+    document.addEventListener("keydown", function(e){
+      const key = e.key.toLowerCase();
+      const ctrl = e.ctrlKey || e.metaKey; // Ctrl on Win/Linux, ⌘ on Mac
+      const shift = e.shiftKey;
+
+      // F12
+      if (e.keyCode === 123) { e.preventDefault(); showToast("Action disabled"); return; }
+
+      // Ctrl/⌘ + Shift + I/J/C/K (common devtools)
+      if (ctrl && shift && ["i","j","c","k"].includes(key)) { e.preventDefault(); showToast("Action disabled"); return; }
+
+      // Ctrl/⌘ + U (view source)
+      if (ctrl && key === "u") { e.preventDefault(); showToast("Action disabled"); return; }
+
+      // Ctrl/⌘ + Shift + P (command palette)
+      if (ctrl && shift && key === "p") { e.preventDefault(); showToast("Action disabled"); return; }
+    });
 
     // ===== Events =====
     document.getElementById("btnReload").addEventListener("click", loadFromCsv);
@@ -559,16 +597,16 @@
     updateEnforcerUI();
     loadFromCsv();
 
-    // Auto-refresh data every 30 seconds
+    // Auto-refresh every 30 seconds
     setInterval(() => { loadFromCsv(); }, 30000);
 
     // Update "last updated" display every second
     setInterval(updateLastUpdatedDisplay, 1000);
 
     // Access gate checks
-    checkAccessGate();                    // on load
-    setInterval(checkAccessGate, 30*1000); // re-check every 30s
-    setInterval(updateGateNowLabel, 1000); // update the clock text on the gate
+    checkAccessGate();
+    setInterval(checkAccessGate, 30000);
+    setInterval(updateGateNowLabel, 1000);
   </script>
 </body>
 </html>
