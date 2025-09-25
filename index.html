@@ -61,7 +61,7 @@
           </button>
         </div>
 
-        <!-- Admin controls: unlock also reveals advanced filters and enforcer column -->
+        <!-- Admin controls: unlock reveals advanced filters + enforcer column -->
         <div class="flex flex-wrap items-center gap-2">
           <span id="adminState" class="text-xs rounded-full px-2 py-1 bg-gray-700 text-gray-200">Admin: Locked</span>
           <input id="enforcerPwd" type="password" placeholder="Enter password"
@@ -111,6 +111,14 @@
             <select id="lotFilter"
                     class="w-full rounded-lg border border-gray-600 bg-gray-900 text-gray-100 px-3 py-2 focus:outline-none focus:ring focus:ring-emerald-500">
               <option value="all">All lots</option>
+            </select>
+          </div>
+          <div>
+            <label for="repeatFilter" class="block text-sm font-medium text-gray-200 mb-2">Repeat Offenders</label>
+            <select id="repeatFilter"
+                    class="w-full rounded-lg border border-gray-600 bg-gray-900 text-gray-100 px-3 py-2 focus:outline-none focus:ring focus:ring-emerald-500">
+              <option value="all">All</option>
+              <option value="repeat">More than 1 violation</option>
             </select>
           </div>
         </div>
@@ -196,7 +204,7 @@
     let DATA = [], HEADMAP = {};
     let lastFetchTime = null;
 
-    // Admin state also controls enforcer column and advanced filters visibility
+    // Admin state controls enforcer column + advanced filters
     let isAdmin = false;
 
     // ACCESS GATE state (time-based overlay)
@@ -216,6 +224,7 @@
     const nameQuery   = document.getElementById("nameQuery");
     const statusFilter= document.getElementById("statusFilter");
     const lotFilter   = document.getElementById("lotFilter");
+    const repeatFilter= document.getElementById("repeatFilter");
     const dateFromEl  = document.getElementById("dateFrom");
     const dateToEl    = document.getElementById("dateTo");
     const overallWrap = document.getElementById("overallWrap");
@@ -354,6 +363,7 @@
 
     function normalizePlate(s){ return String(s||"").toUpperCase().replace(/[-\s]/g,""); }
 
+    // Date helpers
     function parseDateOnlyInput(value){
       if (!value) return null;
       const [y,m,d] = value.split("-").map(n => parseInt(n,10));
@@ -401,10 +411,11 @@
       // Advanced filters only apply when admin is unlocked
       const statusF = isAdmin ? statusFilter.value : 'all';
       const lotF    = isAdmin ? lotFilter.value    : 'all';
+      const repeatF = isAdmin ? repeatFilter.value : 'all';
       const fromD   = isAdmin ? parseDateOnlyInput(dateFromEl.value) : null;
       const toD     = isAdmin ? parseDateOnlyInput(dateToEl.value)   : null;
 
-      if (!plateQ && !nameQ && statusF === 'all' && lotF === 'all' && !fromD && !toD){
+      if (!plateQ && !nameQ && statusF === 'all' && lotF === 'all' && repeatF === 'all' && !fromD && !toD){
         resultsWrap.classList.add("hidden");
         overallWrap.classList.add("hidden");
         statMatches.textContent = 0;
@@ -417,8 +428,15 @@
       const lcNameQ = nameQ.toLowerCase();
       const lotSel = String(lotF || "").toLowerCase();
 
+      // Count violations by plate for repeat offender filter
+      const countsByPlate = {};
+      for (const r of DATA){
+        const key = normalizePlate(r.plate);
+        countsByPlate[key] = (countsByPlate[key] || 0) + 1;
+      }
+
       const matches = DATA.filter(r => {
-        let plateOk = true, nameOk = true, statusOk = true, dateOk = true, lotOk = true;
+        let plateOk = true, nameOk = true, statusOk = true, dateOk = true, lotOk = true, repeatOk = true;
 
         if (plateQ) plateOk = normalizePlate(r.plate).includes(normPlateQ);
         if (nameQ)  nameOk  = String(r.name||"").toLowerCase().includes(lcNameQ);
@@ -431,8 +449,11 @@
         if (lotF !== 'all') {
           lotOk = String(r.location||"").toLowerCase().trim() === lotSel;
         }
+        if (repeatF === 'repeat') {
+          repeatOk = (countsByPlate[normalizePlate(r.plate)] || 0) > 1;
+        }
 
-        return plateOk && nameOk && statusOk && dateOk && lotOk;
+        return plateOk && nameOk && statusOk && dateOk && lotOk && repeatOk;
       });
 
       statMatches.textContent = matches.length;
@@ -521,6 +542,7 @@
       // clear advanced filters when relocking
       statusFilter.value = "all";
       lotFilter.value = "all";
+      repeatFilter.value = "all";
       dateFromEl.value = "";
       dateToEl.value = "";
       updateAdminUI();
@@ -574,6 +596,7 @@
       plateQuery.value=""; nameQuery.value="";
       statusFilter.value="all";
       lotFilter.value="all";
+      repeatFilter.value="all";
       dateFromEl.value = "";
       dateToEl.value = "";
       resultsBody.innerHTML="";
@@ -583,14 +606,15 @@
     });
     statusFilter.addEventListener("change", runSearch);
     lotFilter.addEventListener("change", runSearch);
+    repeatFilter.addEventListener("change", runSearch);
     document.getElementById("btnApplyDates").addEventListener("click", runSearch);
     plateQuery.addEventListener("keyup", e => { if (e.key==="Enter") runSearch(); });
     nameQuery.addEventListener("keyup", e => { if (e.key==="Enter") runSearch(); });
 
     // Init
-    updateAdminUI();           // start locked, hide advanced filters + enforcer col
-    loadFromCsv();             // first load
-    setInterval(loadFromCsv, 60000);   // auto-refresh every 1 minute
+    updateAdminUI();                  // start locked, hide advanced filters + enforcer col
+    loadFromCsv();                    // first load
+    setInterval(loadFromCsv, 60000);  // auto-refresh every 1 minute
     setInterval(updateLastUpdatedDisplay, 1000);
     checkAccessGate();
     setInterval(checkAccessGate, 30000);
