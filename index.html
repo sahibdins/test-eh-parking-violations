@@ -167,18 +167,12 @@
 
     <!-- Results -->
     <section id="resultsWrap" class="bg-gray-800 rounded-xl shadow p-4 hidden">
-      <h2 class="text-lg font-semibold mb-3 text-gray-100">Results</h2>
+      <h2 class="text-lg font-semibold mb-3 text-gray-100" id="resultsTitle">Results</h2>
       <div class="overflow-x-auto">
         <table class="min-w-full text-sm">
           <thead class="bg-gray-700 text-gray-200">
             <tr id="resultsHeaderRow">
-              <th class="text-left px-3 py-2">Timestamp</th>
-              <th class="text-left px-3 py-2">License Plate</th>
-              <th class="text-left px-3 py-2">Driver Name</th>
-              <th class="text-left px-3 py-2">Reason for Citation</th>
-              <th class="text-left px-3 py-2">Location</th>
-              <!-- Enforcer header inserted if admin unlocked -->
-              <th class="text-left px-3 py-2">Status</th>
+              <!-- header cells injected by JS -->
             </tr>
           </thead>
           <tbody id="resultsBody" class="divide-y divide-gray-700"></tbody>
@@ -216,6 +210,7 @@
     const lastUpdated = document.getElementById("lastUpdated");
     const searchSection = document.getElementById("searchSection");
     const resultsWrap = document.getElementById("resultsWrap");
+    const resultsTitle= document.getElementById("resultsTitle");
     const resultsBody = document.getElementById("resultsBody");
     const statRecords = document.getElementById("statRecords");
     const statMatches = document.getElementById("statMatches");
@@ -230,6 +225,7 @@
     const overallWrap = document.getElementById("overallWrap");
     const overallBadge= document.getElementById("overallBadge");
     const advancedFilters = document.getElementById("advancedFilters");
+    const headerRow    = document.getElementById("resultsHeaderRow");
 
     // Admin controls
     const enforcerPwd  = document.getElementById("enforcerPwd");
@@ -237,7 +233,6 @@
     const btnLock      = document.getElementById("btnLock");
     const enforcerMsg  = document.getElementById("enforcerMsg");
     const adminState   = document.getElementById("adminState");
-    const headerRow    = document.getElementById("resultsHeaderRow");
 
     // Access gate controls
     const accessGate = document.getElementById("accessGate");
@@ -316,7 +311,10 @@
       return `<span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${classes}">${status}</span>`;
     }
 
-    function renderHeader(){
+    function normalizePlate(s){ return String(s||"").toUpperCase().replace(/[-\s]/g,""); }
+
+    // Header builders
+    function renderHeaderDetailed(){
       headerRow.innerHTML = `
         <th class="text-left px-3 py-2">Timestamp</th>
         <th class="text-left px-3 py-2">License Plate</th>
@@ -326,6 +324,15 @@
         ${isAdmin ? '<th class="text-left px-3 py-2">Enforcer</th>' : ''}
         <th class="text-left px-3 py-2">Status</th>
       `;
+      resultsTitle.textContent = "Results";
+    }
+    function renderHeaderAggregated(){
+      headerRow.innerHTML = `
+        <th class="text-left px-3 py-2">License Plate</th>
+        <th class="text-left px-3 py-2">Driver Name</th>
+        <th class="text-left px-3 py-2">Offences</th>
+      `;
+      resultsTitle.textContent = "Repeat Offenders";
     }
 
     function populateLotFilter(){
@@ -354,14 +361,10 @@
       searchSection.classList.remove("hidden");
       resultsWrap.classList.add("hidden");
       setStatusOk(`Loaded ${DATA.length} records.`);
-
       populateLotFilter();
-
       lastFetchTime = new Date();
       updateLastUpdatedDisplay();
     }
-
-    function normalizePlate(s){ return String(s||"").toUpperCase().replace(/[-\s]/g,""); }
 
     // Date helpers
     function parseDateOnlyInput(value){
@@ -372,7 +375,6 @@
     }
     function startOfDay(d){ return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0,0,0,0); }
     function endOfDay(d){   return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23,59,59,999); }
-
     function recordInDateRange(recTs, fromDate, toDate){
       if (!fromDate && !toDate) return true;
       const d = new Date(recTs);
@@ -383,12 +385,26 @@
       return true;
     }
 
-    function renderResults(matches){
-      renderHeader();
+    // Select most common non-empty value from an array
+    function mostCommonNonEmpty(values){
+      const counts = {};
+      let best = "", bestCount = 0;
+      for (const v of values){
+        const s = String(v||"").trim();
+        if (!s) continue;
+        counts[s] = (counts[s] || 0) + 1;
+        if (counts[s] > bestCount){ best = s; bestCount = counts[s]; }
+      }
+      return best;
+    }
+
+    function renderResultsDetailed(matches){
+      renderHeaderDetailed();
       resultsBody.innerHTML = "";
       for (const r of matches){
         const st = normalizeStatus(r.status);
-        const tds = `
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
           <td class="px-3 py-2">${escapeHtml(formatDate(r.timestamp))}</td>
           <td class="px-3 py-2 font-semibold">${escapeHtml(r.plate)}</td>
           <td class="px-3 py-2">${escapeHtml(r.name)}</td>
@@ -397,11 +413,54 @@
           ${isAdmin ? `<td class="px-3 py-2">${escapeHtml(r.enforcer || "")}</td>` : ``}
           <td class="px-3 py-2">${statusBadge(st)}</td>
         `;
-        const tr = document.createElement("tr");
-        tr.innerHTML = tds;
         resultsBody.appendChild(tr);
       }
       resultsWrap.classList.remove("hidden");
+    }
+
+    function renderResultsAggregated(matches){
+      // Group matches by normalized plate
+      const groups = new Map(); // key -> {plateForms:[], names:[], count}
+      for (const r of matches){
+        const key = normalizePlate(r.plate);
+        if (!groups.has(key)){
+          groups.set(key, { plateForms: [], names: [], count: 0 });
+        }
+        const g = groups.get(key);
+        g.count += 1;
+        g.plateForms.push(String(r.plate||"").trim());
+        g.names.push(String(r.name||"").trim());
+      }
+      // Keep only groups with count > 1
+      const agg = [];
+      for (const [key, g] of groups.entries()){
+        if (g.count > 1){
+          const displayPlate = mostCommonNonEmpty(g.plateForms) || key;
+          const displayName  = mostCommonNonEmpty(g.names); // may be empty
+          agg.push({ plate: displayPlate, name: displayName, count: g.count });
+        }
+      }
+
+      renderHeaderAggregated();
+      resultsBody.innerHTML = "";
+      for (const row of agg.sort((a,b)=> b.count - a.count || a.plate.localeCompare(b.plate))){
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td class="px-3 py-2 font-semibold">${escapeHtml(row.plate)}</td>
+          <td class="px-3 py-2">${escapeHtml(row.name)}</td>
+          <td class="px-3 py-2">${row.count}</td>
+        `;
+        resultsBody.appendChild(tr);
+      }
+      resultsWrap.classList.remove("hidden");
+
+      // Update stats: Matches = number of plates shown, Violations = sum of counts
+      statMatches.textContent = agg.length;
+      const total = agg.reduce((s,x)=>s+x.count,0);
+      statCount.textContent = total;
+
+      // Overall badge doesn't make sense in aggregated mode—hide it
+      overallWrap.classList.add("hidden");
     }
 
     function runSearch(){
@@ -428,47 +487,46 @@
       const lcNameQ = nameQ.toLowerCase();
       const lotSel = String(lotF || "").toLowerCase();
 
-      // Count violations by plate for repeat offender filter
-      const countsByPlate = {};
-      for (const r of DATA){
-        const key = normalizePlate(r.plate);
-        countsByPlate[key] = (countsByPlate[key] || 0) + 1;
-      }
-
-      const matches = DATA.filter(r => {
-        let plateOk = true, nameOk = true, statusOk = true, dateOk = true, lotOk = true, repeatOk = true;
+      // Pre-count by plate for repeat logic (based on filtered rows later; so we count after filters)
+      const matchesPre = DATA.filter(r => {
+        let plateOk = true, nameOk = true, statusOk = true, dateOk = true, lotOk = true;
 
         if (plateQ) plateOk = normalizePlate(r.plate).includes(normPlateQ);
         if (nameQ)  nameOk  = String(r.name||"").toLowerCase().includes(lcNameQ);
-        if (statusF !== 'all') {
-          statusOk = normalizeStatus(r.status) === (statusF === 'paid' ? 'Paid' : 'Unpaid');
-        }
-        if (fromD || toD) {
-          dateOk = recordInDateRange(r.timestamp, fromD, toD);
-        }
-        if (lotF !== 'all') {
-          lotOk = String(r.location||"").toLowerCase().trim() === lotSel;
-        }
-        if (repeatF === 'repeat') {
-          repeatOk = (countsByPlate[normalizePlate(r.plate)] || 0) > 1;
-        }
+        if (statusF !== 'all') statusOk = normalizeStatus(r.status) === (statusF === 'paid' ? 'Paid' : 'Unpaid');
+        if (fromD || toD)      dateOk = recordInDateRange(r.timestamp, fromD, toD);
+        if (lotF !== 'all')    lotOk  = String(r.location||"").toLowerCase().trim() === lotSel;
 
-        return plateOk && nameOk && statusOk && dateOk && lotOk && repeatOk;
+        return plateOk && nameOk && statusOk && dateOk && lotOk;
       });
 
-      statMatches.textContent = matches.length;
-      statCount.textContent = matches.length;
+      // If not in repeat mode, treat like before
+      if (repeatF !== 'repeat'){
+        // Stats reflect row count
+        statMatches.textContent = matchesPre.length;
+        statCount.textContent = matchesPre.length;
 
-      let overall = "Unpaid";
-      if (matches.length > 0 && matches.every(r => normalizeStatus(r.status) === "Paid")) {
-        overall = "Paid";
+        // Overall badge: Paid only if ALL matches are Paid
+        let overall = "Unpaid";
+        if (matchesPre.length > 0 && matchesPre.every(r => normalizeStatus(r.status) === "Paid")) overall = "Paid";
+        overallWrap.classList.remove("hidden");
+        overallBadge.className = "inline-flex items-center rounded-full px-3 py-1 text-sm font-medium " +
+          (overall === "Paid" ? "bg-green-700/70 text-green-100" : "bg-red-700/70 text-red-100");
+        overallBadge.textContent = overall;
+
+        renderResultsDetailed(matchesPre);
+        return;
       }
-      overallWrap.classList.remove("hidden");
-      overallBadge.className = "inline-flex items-center rounded-full px-3 py-1 text-sm font-medium " +
-        (overall === "Paid" ? "bg-green-700/70 text-green-100" : "bg-red-700/70 text-red-100");
-      overallBadge.textContent = overall;
 
-      renderResults(matches);
+      // Repeat mode: only rows whose plate occurs >1 within the filtered set
+      const plateCounts = {};
+      for (const r of matchesPre){
+        const k = normalizePlate(r.plate);
+        plateCounts[k] = (plateCounts[k] || 0) + 1;
+      }
+      const repeatRows = matchesPre.filter(r => plateCounts[normalizePlate(r.plate)] > 1);
+
+      renderResultsAggregated(repeatRows);
     }
 
     function setStatusOk(msg){
@@ -520,8 +578,10 @@
 
       // show/hide advanced filters
       advancedFilters.classList.toggle("hidden", !isAdmin);
-      // rerender header so Enforcer column appears/disappears
-      renderHeader();
+
+      // Re-render header based on current mode
+      if (isAdmin && repeatFilter.value === 'repeat') renderHeaderAggregated();
+      else renderHeaderDetailed();
     }
 
     btnUnlock.addEventListener("click", () => {
@@ -530,7 +590,7 @@
       if (val === "002821"){
         isAdmin = true;
         updateAdminUI();
-        runSearch(); // re-render with admin filters + enforcer visible
+        runSearch(); // re-render with admin filters + potential repeat header
         enforcerPwd.value = "";
       } else {
         enforcerMsg.textContent = "Incorrect password.";
@@ -606,12 +666,18 @@
     });
     statusFilter.addEventListener("change", runSearch);
     lotFilter.addEventListener("change", runSearch);
-    repeatFilter.addEventListener("change", runSearch);
+    repeatFilter.addEventListener("change", () => {
+      // Switch header immediately when toggling repeat mode
+      if (isAdmin && repeatFilter.value === 'repeat') renderHeaderAggregated();
+      else renderHeaderDetailed();
+      runSearch();
+    });
     document.getElementById("btnApplyDates").addEventListener("click", runSearch);
     plateQuery.addEventListener("keyup", e => { if (e.key==="Enter") runSearch(); });
     nameQuery.addEventListener("keyup", e => { if (e.key==="Enter") runSearch(); });
 
     // Init
+    renderHeaderDetailed();
     updateAdminUI();                  // start locked, hide advanced filters + enforcer col
     loadFromCsv();                    // first load
     setInterval(loadFromCsv, 60000);  // auto-refresh every 1 minute
