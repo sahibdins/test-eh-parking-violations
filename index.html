@@ -165,15 +165,25 @@
       </div>
     </section>
 
+    <!-- Ticket Submission Form Link (student-facing) -->
+    <section class="bg-gray-800 rounded-xl shadow p-4 mb-6">
+      <h2 class="text-lg font-semibold text-white mb-3">Submit a Parking Violation</h2>
+      <p class="text-sm text-gray-400 mb-4">
+        Use the form below to submit a new parking violation ticket.
+      </p>
+      <a href="https://forms.gle/WcwMUCiZMMpW4Mkt5" target="_blank" rel="noopener"
+         class="inline-flex items-center rounded-lg bg-indigo-600 text-white px-5 py-2 font-medium hover:bg-indigo-700">
+        Open Ticket Form
+      </a>
+    </section>
+
     <!-- Results -->
     <section id="resultsWrap" class="bg-gray-800 rounded-xl shadow p-4 hidden">
       <h2 class="text-lg font-semibold mb-3 text-gray-100" id="resultsTitle">Results</h2>
       <div class="overflow-x-auto">
         <table class="min-w-full text-sm">
           <thead class="bg-gray-700 text-gray-200">
-            <tr id="resultsHeaderRow">
-              <!-- header cells injected by JS -->
-            </tr>
+            <tr id="resultsHeaderRow"></tr>
           </thead>
           <tbody id="resultsBody" class="divide-y divide-gray-700"></tbody>
         </table>
@@ -487,7 +497,7 @@
       const lcNameQ = nameQ.toLowerCase();
       const lotSel = String(lotF || "").toLowerCase();
 
-      // Pre-count by plate for repeat logic (based on filtered rows later; so we count after filters)
+      // Pre-filter rows by all criteria except repeat mode formatting
       const matchesPre = DATA.filter(r => {
         let plateOk = true, nameOk = true, statusOk = true, dateOk = true, lotOk = true;
 
@@ -500,13 +510,11 @@
         return plateOk && nameOk && statusOk && dateOk && lotOk;
       });
 
-      // If not in repeat mode, treat like before
+      // Normal detailed mode
       if (repeatF !== 'repeat'){
-        // Stats reflect row count
         statMatches.textContent = matchesPre.length;
         statCount.textContent = matchesPre.length;
 
-        // Overall badge: Paid only if ALL matches are Paid
         let overall = "Unpaid";
         if (matchesPre.length > 0 && matchesPre.every(r => normalizeStatus(r.status) === "Paid")) overall = "Paid";
         overallWrap.classList.remove("hidden");
@@ -518,14 +526,13 @@
         return;
       }
 
-      // Repeat mode: only rows whose plate occurs >1 within the filtered set
+      // Repeat (aggregated) mode: keep only rows whose plate occurs >1 in matchesPre
       const plateCounts = {};
       for (const r of matchesPre){
         const k = normalizePlate(r.plate);
         plateCounts[k] = (plateCounts[k] || 0) + 1;
       }
       const repeatRows = matchesPre.filter(r => plateCounts[normalizePlate(r.plate)] > 1);
-
       renderResultsAggregated(repeatRows);
     }
 
