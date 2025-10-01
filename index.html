@@ -123,7 +123,7 @@
           </div>
         </div>
 
-        <!-- Date range row -->
+        <!-- Date + Hang Tag row -->
         <div class="grid gap-3 md:grid-cols-6 mt-3">
           <div class="md:col-span-2">
             <label for="dateFrom" class="block text-sm font-medium text-gray-200 mb-2">From (date)</label>
@@ -133,6 +133,11 @@
           <div class="md:col-span-2">
             <label for="dateTo" class="block text-sm font-medium text-gray-200 mb-2">To (date)</label>
             <input id="dateTo" type="date"
+                   class="w-full rounded-lg border border-gray-600 bg-gray-900 text-gray-100 px-3 py-2 focus:outline-none focus:ring focus:ring-emerald-500" />
+          </div>
+          <div class="md:col-span-2">
+            <label for="hangQuery" class="block text-sm font-medium text-gray-200 mb-2">Search by Hang Tag (admin)</label>
+            <input id="hangQuery" type="text" placeholder="e.g., 1234"
                    class="w-full rounded-lg border border-gray-600 bg-gray-900 text-gray-100 px-3 py-2 focus:outline-none focus:ring focus:ring-emerald-500" />
           </div>
         </div>
@@ -202,7 +207,8 @@
       name: ["driver's name (if known)","driver name","student name","name"],
       location: ["parking location:","location","lot"],
       enforcer: ["parking enforcer first and last name:","enforcer","issued by"],
-      status: ["status","payment status","paid","is paid","paid?"]
+      status: ["status","payment status","paid","is paid","paid?"],
+      hangtag: ["hang tag number","hangtag","hang tag","tag","tag number","hang-tag","hangtag #","hang tag #"]
     };
 
     let DATA = [], HEADMAP = {};
@@ -214,7 +220,7 @@
     // ACCESS GATE state (time-based overlay)
     let adminOverride = false;
 
-    // Best driver name per normalized plate, computed from ALL rows (ignores placeholders like N/A)
+    // Best driver name per normalized plate (for repeat offenders)
     let bestNameByPlate = {};
 
     const loadStatus  = document.getElementById("loadStatus");
@@ -235,6 +241,7 @@
     const repeatFilter= document.getElementById("repeatFilter");
     const dateFromEl  = document.getElementById("dateFrom");
     const dateToEl    = document.getElementById("dateTo");
+    const hangQuery   = document.getElementById("hangQuery");
     const overallWrap = document.getElementById("overallWrap");
     const overallBadge= document.getElementById("overallBadge");
     const advancedFilters = document.getElementById("advancedFilters");
@@ -303,7 +310,7 @@
     }
 
     function normalizeRow(row){
-      const out = {timestamp:"",reason:"",plate:"",name:"",location:"",enforcer:"",status:""};
+      const out = {timestamp:"",reason:"",plate:"",name:"",location:"",enforcer:"",status:"",hangtag:""};
       for (const key of Object.keys(HEADMAP)){
         const idx = HEADMAP[key];
         out[key] = norm(row[idx]);
@@ -325,8 +332,9 @@
     }
 
     function normalizePlate(s){ return String(s||"").toUpperCase().replace(/[-\s]/g,""); }
+    function normalizeHang(s){ return String(s||"").toUpperCase().replace(/[^A-Z0-9]/g,""); } // remove non-alphanumerics
 
-    // Treat common placeholders as empty names
+    // Placeholders to ignore for names
     function isPlaceholderName(s){
       const t = String(s||"").trim();
       if (!t) return true;
@@ -336,32 +344,28 @@
 
     // Build bestNameByPlate from ALL data
     function buildBestNameMap(){
-      const tally = {}; // plateKey -> nameKey -> {count, display}
+      const tally = {};
       for (const r of DATA){
         const plateKey = normalizePlate(r.plate);
         const raw = String(r.name||"").trim();
         if (isPlaceholderName(raw)) continue;
-        const nameKey = raw.toLowerCase();
+        const key = raw.toLowerCase();
         if (!tally[plateKey]) tally[plateKey] = {};
-        if (!tally[plateKey][nameKey]) tally[plateKey][nameKey] = { count: 0, display: raw };
-        tally[plateKey][nameKey].count += 1;
+        if (!tally[plateKey][key]) tally[plateKey][key] = { count: 0, display: raw };
+        tally[plateKey][key].count += 1;
       }
       const best = {};
       for (const plateKey of Object.keys(tally)){
         let bestName = "", bestCount = 0;
-        for (const nameKey of Object.keys(tally[plateKey])){
-          const { count, display } = tally[plateKey][nameKey];
-          if (count > bestCount){
-            bestCount = count;
-            bestName = display;
-          }
+        for (const k of Object.keys(tally[plateKey])){
+          const { count, display } = tally[plateKey][k];
+          if (count > bestCount){ bestCount = count; bestName = display; }
         }
         if (bestName) best[plateKey] = bestName;
       }
       bestNameByPlate = best;
     }
 
-    // Header builders
     function renderHeaderDetailed(){
       headerRow.innerHTML = `
         <th class="text-left px-3 py-2">Timestamp</th>
@@ -369,6 +373,7 @@
         <th class="text-left px-3 py-2">Driver Name</th>
         <th class="text-left px-3 py-2">Reason for Citation</th>
         <th class="text-left px-3 py-2">Location</th>
+        ${isAdmin ? '<th class="text-left px-3 py-2">Hang Tag</th>' : ''}
         ${isAdmin ? '<th class="text-left px-3 py-2">Enforcer</th>' : ''}
         <th class="text-left px-3 py-2">Status</th>
       `;
@@ -410,10 +415,7 @@
       resultsWrap.classList.add("hidden");
       setStatusOk(`Loaded ${DATA.length} records.`);
       populateLotFilter();
-
-      // build global best name map after every load
       buildBestNameMap();
-
       lastFetchTime = new Date();
       updateLastUpdatedDisplay();
     }
@@ -468,6 +470,7 @@
           <td class="px-3 py-2">${escapeHtml(r.name)}</td>
           <td class="px-3 py-2">${escapeHtml(r.reason)}</td>
           <td class="px-3 py-2">${escapeHtml(r.location || "")}</td>
+          ${isAdmin ? `<td class="px-3 py-2">${escapeHtml(r.hangtag || "")}</td>` : ``}
           ${isAdmin ? `<td class="px-3 py-2">${escapeHtml(r.enforcer || "")}</td>` : ``}
           <td class="px-3 py-2">${statusBadge(st)}</td>
         `;
@@ -494,7 +497,6 @@
       for (const [key, g] of groups.entries()){
         if (g.count > 1){
           const displayPlate = mostCommonNonEmpty(g.plateForms) || key;
-          // Prefer global best name for this plate (from ALL data), fallback to local most common
           const globalBest = bestNameByPlate[key] || "";
           const localBest  = mostCommonNonEmpty(g.names);
           const displayName = globalBest || localBest || "";
@@ -520,7 +522,6 @@
       const total = agg.reduce((s,x)=>s+x.count,0);
       statCount.textContent = total;
 
-      // Overall badge doesn't make sense in aggregated mode—hide it
       overallWrap.classList.add("hidden");
     }
 
@@ -534,8 +535,9 @@
       const repeatF = isAdmin ? repeatFilter.value : 'all';
       const fromD   = isAdmin ? parseDateOnlyInput(dateFromEl.value) : null;
       const toD     = isAdmin ? parseDateOnlyInput(dateToEl.value)   : null;
+      const hangQ   = isAdmin ? hangQuery.value.trim()               : "";
 
-      if (!plateQ && !nameQ && statusF === 'all' && lotF === 'all' && repeatF === 'all' && !fromD && !toD){
+      if (!plateQ && !nameQ && statusF === 'all' && lotF === 'all' && repeatF === 'all' && !fromD && !toD && !hangQ){
         resultsWrap.classList.add("hidden");
         overallWrap.classList.add("hidden");
         statMatches.textContent = 0;
@@ -545,23 +547,25 @@
       }
 
       const normPlateQ = normalizePlate(plateQ);
-      const lcNameQ = nameQuery.value.toLowerCase();
+      const lcNameQ = nameQ.toLowerCase();
       const lotSel = String(lotF || "").toLowerCase();
+      const normHangQ = normalizeHang(hangQ);
 
-      // Pre-filter rows by all criteria except repeat-mode formatting
+      // Pre-filter rows by all criteria
       const matchesPre = DATA.filter(r => {
-        let plateOk = true, nameOk = true, statusOk = true, dateOk = true, lotOk = true;
+        let plateOk = true, nameOk = true, statusOk = true, dateOk = true, lotOk = true, hangOk = true;
 
         if (plateQ) plateOk = normalizePlate(r.plate).includes(normPlateQ);
         if (nameQ)  nameOk  = String(r.name||"").toLowerCase().includes(lcNameQ);
         if (statusF !== 'all') statusOk = normalizeStatus(r.status) === (statusF === 'paid' ? 'Paid' : 'Unpaid');
         if (fromD || toD)      dateOk = recordInDateRange(r.timestamp, fromD, toD);
         if (lotF !== 'all')    lotOk  = String(r.location||"").toLowerCase().trim() === lotSel;
+        if (hangQ)             hangOk = normalizeHang(r.hangtag).includes(normHangQ);
 
-        return plateOk && nameOk && statusOk && dateOk && lotOk;
+        return plateOk && nameOk && statusOk && dateOk && lotOk && hangOk;
       });
 
-      // Normal detailed mode
+      // Normal detailed or aggregated repeat mode
       if (repeatF !== 'repeat'){
         statMatches.textContent = matchesPre.length;
         statCount.textContent = matchesPre.length;
@@ -648,7 +652,7 @@
       if (val === "002821"){
         isAdmin = true;
         updateAdminUI();
-        runSearch(); // re-render with admin filters + potential repeat header
+        runSearch();
         enforcerPwd.value = "";
       } else {
         enforcerMsg.textContent = "Incorrect password.";
@@ -663,8 +667,9 @@
       repeatFilter.value = "all";
       dateFromEl.value = "";
       dateToEl.value = "";
+      hangQuery.value = "";
       updateAdminUI();
-      runSearch(); // re-render with admin features hidden
+      runSearch();
     });
 
     // ===== Access Gate (time restriction in America/New_York) =====
@@ -717,6 +722,7 @@
       repeatFilter.value="all";
       dateFromEl.value = "";
       dateToEl.value = "";
+      hangQuery.value = "";
       resultsBody.innerHTML="";
       resultsWrap.classList.add("hidden");
       overallWrap.classList.add("hidden");
@@ -725,7 +731,6 @@
     statusFilter.addEventListener("change", runSearch);
     lotFilter.addEventListener("change", runSearch);
     repeatFilter.addEventListener("change", () => {
-      // Switch header immediately when toggling repeat mode
       if (isAdmin && repeatFilter.value === 'repeat') renderHeaderAggregated();
       else renderHeaderDetailed();
       runSearch();
@@ -733,10 +738,11 @@
     document.getElementById("btnApplyDates").addEventListener("click", runSearch);
     plateQuery.addEventListener("keyup", e => { if (e.key==="Enter") runSearch(); });
     nameQuery.addEventListener("keyup", e => { if (e.key==="Enter") runSearch(); });
+    hangQuery.addEventListener("keyup", e => { if (e.key==="Enter") runSearch(); });
 
     // Init
     renderHeaderDetailed();
-    updateAdminUI();                  // start locked, hide advanced filters + enforcer col
+    updateAdminUI();                  // start locked, hide advanced filters + admin columns
     loadFromCsv();                    // first load
     setInterval(loadFromCsv, 60000);  // auto-refresh every 1 minute
     setInterval(updateLastUpdatedDisplay, 1000);
