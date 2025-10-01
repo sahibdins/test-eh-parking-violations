@@ -214,6 +214,9 @@
     // ACCESS GATE state (time-based overlay)
     let adminOverride = false;
 
+    // Best driver name per normalized plate, computed from ALL rows (ignores placeholders like N/A)
+    let bestNameByPlate = {};
+
     const loadStatus  = document.getElementById("loadStatus");
     const errDetails  = document.getElementById("errDetails");
     const errText     = document.getElementById("errText");
@@ -323,6 +326,41 @@
 
     function normalizePlate(s){ return String(s||"").toUpperCase().replace(/[-\s]/g,""); }
 
+    // Treat common placeholders as empty names
+    function isPlaceholderName(s){
+      const t = String(s||"").trim();
+      if (!t) return true;
+      const l = t.toLowerCase();
+      return ["n/a","na","none","-","unknown","not listed","nil","n\\a","n.a."].includes(l);
+    }
+
+    // Build bestNameByPlate from ALL data
+    function buildBestNameMap(){
+      const tally = {}; // plateKey -> nameKey -> {count, display}
+      for (const r of DATA){
+        const plateKey = normalizePlate(r.plate);
+        const raw = String(r.name||"").trim();
+        if (isPlaceholderName(raw)) continue;
+        const nameKey = raw.toLowerCase();
+        if (!tally[plateKey]) tally[plateKey] = {};
+        if (!tally[plateKey][nameKey]) tally[plateKey][nameKey] = { count: 0, display: raw };
+        tally[plateKey][nameKey].count += 1;
+      }
+      const best = {};
+      for (const plateKey of Object.keys(tally)){
+        let bestName = "", bestCount = 0;
+        for (const nameKey of Object.keys(tally[plateKey])){
+          const { count, display } = tally[plateKey][nameKey];
+          if (count > bestCount){
+            bestCount = count;
+            bestName = display;
+          }
+        }
+        if (bestName) best[plateKey] = bestName;
+      }
+      bestNameByPlate = best;
+    }
+
     // Header builders
     function renderHeaderDetailed(){
       headerRow.innerHTML = `
@@ -372,6 +410,10 @@
       resultsWrap.classList.add("hidden");
       setStatusOk(`Loaded ${DATA.length} records.`);
       populateLotFilter();
+
+      // build global best name map after every load
+      buildBestNameMap();
+
       lastFetchTime = new Date();
       updateLastUpdatedDisplay();
     }
@@ -395,15 +437,21 @@
       return true;
     }
 
-    // Select most common non-empty value from an array
+    // Select most common non-empty value from an array (ignoring placeholders)
     function mostCommonNonEmpty(values){
       const counts = {};
       let best = "", bestCount = 0;
       for (const v of values){
+        if (isPlaceholderName(v)) continue;
         const s = String(v||"").trim();
         if (!s) continue;
-        counts[s] = (counts[s] || 0) + 1;
-        if (counts[s] > bestCount){ best = s; bestCount = counts[s]; }
+        const key = s.toLowerCase();
+        counts[key] = counts[key] ? { count: counts[key].count + 1, display: s }
+                                  : { count: 1, display: s };
+        if (counts[key].count > bestCount){
+          best = counts[key].display;
+          bestCount = counts[key].count;
+        }
       }
       return best;
     }
@@ -446,8 +494,11 @@
       for (const [key, g] of groups.entries()){
         if (g.count > 1){
           const displayPlate = mostCommonNonEmpty(g.plateForms) || key;
-          const displayName  = mostCommonNonEmpty(g.names); // may be empty
-          agg.push({ plate: displayPlate, name: displayName, count: g.count });
+          // Prefer global best name for this plate (from ALL data), fallback to local most common
+          const globalBest = bestNameByPlate[key] || "";
+          const localBest  = mostCommonNonEmpty(g.names);
+          const displayName = globalBest || localBest || "";
+          agg.push({ plate: displayPlate, name: displayName, count: g.count, key });
         }
       }
 
@@ -494,10 +545,10 @@
       }
 
       const normPlateQ = normalizePlate(plateQ);
-      const lcNameQ = nameQ.toLowerCase();
+      const lcNameQ = nameQuery.value.toLowerCase();
       const lotSel = String(lotF || "").toLowerCase();
 
-      // Pre-filter rows by all criteria except repeat mode formatting
+      // Pre-filter rows by all criteria except repeat-mode formatting
       const matchesPre = DATA.filter(r => {
         let plateOk = true, nameOk = true, statusOk = true, dateOk = true, lotOk = true;
 
