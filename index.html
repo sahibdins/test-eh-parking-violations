@@ -61,7 +61,7 @@
           </button>
         </div>
 
-        <!-- Admin controls: unlock reveals advanced filters + enforcer column -->
+        <!-- Admin controls -->
         <div class="flex flex-wrap items-center gap-2">
           <span id="adminState" class="text-xs rounded-full px-2 py-1 bg-gray-700 text-gray-200">Admin: Locked</span>
           <input id="enforcerPwd" type="password" placeholder="Enter password"
@@ -74,6 +74,13 @@
                   class="rounded-lg bg-gray-600 text-white px-3 py-2 text-sm font-medium hover:bg-gray-500 hidden">
             Lock
           </button>
+
+          <!-- Admin-only Print Report trigger -->
+          <button id="btnPrintOpen"
+                  class="rounded-lg bg-indigo-600 text-white px-3 py-2 text-sm font-medium hover:bg-indigo-700 hidden">
+            Print Report
+          </button>
+
           <span id="enforcerMsg" class="text-xs text-red-400"></span>
         </div>
       </div>
@@ -123,7 +130,7 @@
           </div>
         </div>
 
-        <!-- Date + Hang Tag row -->
+        <!-- Date + Hang Tag row (admin) -->
         <div class="grid gap-3 md:grid-cols-6 mt-3">
           <div class="md:col-span-2">
             <label for="dateFrom" class="block text-sm font-medium text-gray-200 mb-2">From (date)</label>
@@ -196,6 +203,46 @@
     </section>
   </div>
 
+  <!-- PRINT REPORT MODAL (admin) -->
+  <div id="printModal" class="fixed inset-0 z-50 hidden">
+    <div class="absolute inset-0 bg-black/70"></div>
+    <div class="relative z-10 h-full w-full flex items-center justify-center p-4">
+      <div class="w-full max-w-lg bg-gray-800 rounded-xl shadow-lg p-6">
+        <div class="flex items-center justify-between">
+          <h3 class="text-lg font-semibold text-white">Print Report</h3>
+          <button id="printClose" class="text-gray-300 hover:text-white text-xl leading-none">&times;</button>
+        </div>
+        <div class="mt-4 grid gap-4">
+          <div>
+            <label class="block text-sm text-gray-200 mb-2" for="printType">Report type</label>
+            <select id="printType"
+                    class="w-full rounded-lg border border-gray-600 bg-gray-900 text-gray-100 px-3 py-2 focus:outline-none focus:ring focus:ring-indigo-500">
+              <option value="current">Current filters</option>
+              <option value="paid">Paid only</option>
+              <option value="unpaid">Unpaid only</option>
+              <option value="repeat">Repeat offenders (aggregated)</option>
+              <option value="lot">By lot (use current lot)</option>
+              <option value="date">By date range (use current)</option>
+            </select>
+            <p class="text-xs text-gray-400 mt-2">
+              Note: “By lot” and “By date range” use your current selections in the filters.
+            </p>
+          </div>
+          <div class="flex items-center justify-end gap-2">
+            <button id="printCancel"
+                    class="rounded-lg bg-gray-600 text-white px-4 py-2 text-sm hover:bg-gray-500">
+              Cancel
+            </button>
+            <button id="printGo"
+                    class="rounded-lg bg-indigo-600 text-white px-4 py-2 text-sm hover:bg-indigo-700">
+              Generate & Print
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
     const CSV_BASE = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQErBNRgH1hcQYmr4hwDiMeAB1-Xwu4AT_2r2dWuWEooMXm80T4dGzhjxzG6OehqOFux2kZDHaIaW3g/pub?output=csv";
     const CSV_URL = () => `${CSV_BASE}&_=${Date.now()}`; // cache-buster
@@ -214,15 +261,16 @@
     let DATA = [], HEADMAP = {};
     let lastFetchTime = null;
 
-    // Admin state controls enforcer column + advanced filters
+    // Admin state controls admin-only UI + columns
     let isAdmin = false;
 
     // ACCESS GATE state (time-based overlay)
     let adminOverride = false;
 
-    // Best driver name per normalized plate (for repeat offenders)
+    // Best driver name per normalized plate
     let bestNameByPlate = {};
 
+    // Elements
     const loadStatus  = document.getElementById("loadStatus");
     const errDetails  = document.getElementById("errDetails");
     const errText     = document.getElementById("errText");
@@ -253,6 +301,14 @@
     const btnLock      = document.getElementById("btnLock");
     const enforcerMsg  = document.getElementById("enforcerMsg");
     const adminState   = document.getElementById("adminState");
+    const btnPrintOpen = document.getElementById("btnPrintOpen");
+
+    // Print modal
+    const printModal  = document.getElementById("printModal");
+    const printClose  = document.getElementById("printClose");
+    const printCancel = document.getElementById("printCancel");
+    const printGo     = document.getElementById("printGo");
+    const printType   = document.getElementById("printType");
 
     // Access gate controls
     const accessGate = document.getElementById("accessGate");
@@ -269,7 +325,6 @@
       const pad=n=>String(n).padStart(2,"0");
       return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
     }
-
     function fmtAgo(ms){
       const s = Math.floor(ms/1000);
       if (s < 60) return `${s}s ago`;
@@ -297,7 +352,6 @@
       }
       return null;
     }
-
     function buildHeadMap(headers){
       HEADMAP = {};
       headers.forEach((h,i) => {
@@ -308,7 +362,6 @@
       const missing = required.filter(k => !(k in HEADMAP));
       if (missing.length) throw new Error("Missing required columns: " + missing.join(", "));
     }
-
     function normalizeRow(row){
       const out = {timestamp:"",reason:"",plate:"",name:"",location:"",enforcer:"",status:"",hangtag:""};
       for (const key of Object.keys(HEADMAP)){
@@ -317,24 +370,21 @@
       }
       return out;
     }
-
     function normalizeStatus(v){
       const s = String(v||"").trim().toLowerCase();
       if (["paid","true","yes","y","1","paid in full"].includes(s)) return "Paid";
       if (["unpaid","false","no","n","0"].includes(s)) return "Unpaid";
       return "Unpaid";
     }
-
     function statusBadge(status){
       const isPaid = status === "Paid";
       const classes = isPaid ? "bg-green-700/70 text-green-100" : "bg-red-700/70 text-red-100";
       return `<span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${classes}">${status}</span>`;
     }
-
     function normalizePlate(s){ return String(s||"").toUpperCase().replace(/[-\s]/g,""); }
-    function normalizeHang(s){ return String(s||"").toUpperCase().replace(/[^A-Z0-9]/g,""); } // remove non-alphanumerics
+    function normalizeHang(s){ return String(s||"").toUpperCase().replace(/[^A-Z0-9]/g,""); }
 
-    // Placeholders to ignore for names
+    // Placeholder names to ignore
     function isPlaceholderName(s){
       const t = String(s||"").trim();
       if (!t) return true;
@@ -342,7 +392,7 @@
       return ["n/a","na","none","-","unknown","not listed","nil","n\\a","n.a."].includes(l);
     }
 
-    // Build bestNameByPlate from ALL data
+    // Build best display name per plate across ALL rows
     function buildBestNameMap(){
       const tally = {};
       for (const r of DATA){
@@ -366,6 +416,7 @@
       bestNameByPlate = best;
     }
 
+    // Header builders
     function renderHeaderDetailed(){
       headerRow.innerHTML = `
         <th class="text-left px-3 py-2">Timestamp</th>
@@ -405,10 +456,7 @@
 
     function handleRecords(headers, rows){
       try { buildHeadMap(headers); }
-      catch(e){
-        showError(e);
-        return;
-      }
+      catch(e){ showError(e); return; }
       DATA = rows.map(normalizeRow);
       statRecords.textContent = DATA.length;
       searchSection.classList.remove("hidden");
@@ -439,7 +487,7 @@
       return true;
     }
 
-    // Select most common non-empty value from an array (ignoring placeholders)
+    // Local “most common non-empty” (ignoring placeholders)
     function mostCommonNonEmpty(values){
       const counts = {};
       let best = "", bestCount = 0;
@@ -448,12 +496,8 @@
         const s = String(v||"").trim();
         if (!s) continue;
         const key = s.toLowerCase();
-        counts[key] = counts[key] ? { count: counts[key].count + 1, display: s }
-                                  : { count: 1, display: s };
-        if (counts[key].count > bestCount){
-          best = counts[key].display;
-          bestCount = counts[key].count;
-        }
+        counts[key] = counts[key] ? { count: counts[key].count + 1, display: s } : { count: 1, display: s };
+        if (counts[key].count > bestCount){ best = counts[key].display; bestCount = counts[key].count; }
       }
       return best;
     }
@@ -480,19 +524,15 @@
     }
 
     function renderResultsAggregated(matches){
-      // Group matches by normalized plate
       const groups = new Map(); // key -> {plateForms:[], names:[], count}
       for (const r of matches){
         const key = normalizePlate(r.plate);
-        if (!groups.has(key)){
-          groups.set(key, { plateForms: [], names: [], count: 0 });
-        }
+        if (!groups.has(key)) groups.set(key, { plateForms: [], names: [], count: 0 });
         const g = groups.get(key);
         g.count += 1;
         g.plateForms.push(String(r.plate||"").trim());
         g.names.push(String(r.name||"").trim());
       }
-      // Keep only groups with count > 1
       const agg = [];
       for (const [key, g] of groups.entries()){
         if (g.count > 1){
@@ -503,7 +543,6 @@
           agg.push({ plate: displayPlate, name: displayName, count: g.count, key });
         }
       }
-
       renderHeaderAggregated();
       resultsBody.innerHTML = "";
       for (const row of agg.sort((a,b)=> b.count - a.count || a.plate.localeCompare(b.plate))){
@@ -516,43 +555,29 @@
         resultsBody.appendChild(tr);
       }
       resultsWrap.classList.remove("hidden");
-
-      // Update stats: Matches = number of plates shown, Violations = sum of counts
       statMatches.textContent = agg.length;
       const total = agg.reduce((s,x)=>s+x.count,0);
       statCount.textContent = total;
-
       overallWrap.classList.add("hidden");
     }
 
-    function runSearch(){
-      const plateQ = plateQuery.value.trim();
-      const nameQ  = nameQuery.value.trim();
-
-      // Advanced filters only apply when admin is unlocked
-      const statusF = isAdmin ? statusFilter.value : 'all';
-      const lotF    = isAdmin ? lotFilter.value    : 'all';
-      const repeatF = isAdmin ? repeatFilter.value : 'all';
-      const fromD   = isAdmin ? parseDateOnlyInput(dateFromEl.value) : null;
-      const toD     = isAdmin ? parseDateOnlyInput(dateToEl.value)   : null;
-      const hangQ   = isAdmin ? hangQuery.value.trim()               : "";
-
-      if (!plateQ && !nameQ && statusF === 'all' && lotF === 'all' && repeatF === 'all' && !fromD && !toD && !hangQ){
-        resultsWrap.classList.add("hidden");
-        overallWrap.classList.add("hidden");
-        statMatches.textContent = 0;
-        statCount.textContent = 0;
-        resultsBody.innerHTML = "";
-        return;
-      }
+    // Core filtering used for both on-screen results and printing
+    function getFilteredRows(opts = {}){
+      const plateQ = (opts.plateQ ?? plateQuery.value).trim();
+      const nameQ  = (opts.nameQ  ?? nameQuery.value).trim();
+      const statusF= opts.statusF ?? (isAdmin ? statusFilter.value : 'all');
+      const lotF   = opts.lotF    ?? (isAdmin ? lotFilter.value : 'all');
+      const repeatF= opts.repeatF ?? (isAdmin ? repeatFilter.value : 'all');
+      const fromD  = opts.fromD   ?? (isAdmin ? parseDateOnlyInput(dateFromEl.value) : null);
+      const toD    = opts.toD     ?? (isAdmin ? parseDateOnlyInput(dateToEl.value)   : null);
+      const hangQ  = (opts.hangQ  ?? (isAdmin ? hangQuery.value : "")).trim();
 
       const normPlateQ = normalizePlate(plateQ);
       const lcNameQ = nameQ.toLowerCase();
       const lotSel = String(lotF || "").toLowerCase();
       const normHangQ = normalizeHang(hangQ);
 
-      // Pre-filter rows by all criteria
-      const matchesPre = DATA.filter(r => {
+      const rows = DATA.filter(r => {
         let plateOk = true, nameOk = true, statusOk = true, dateOk = true, lotOk = true, hangOk = true;
 
         if (plateQ) plateOk = normalizePlate(r.plate).includes(normPlateQ);
@@ -565,7 +590,22 @@
         return plateOk && nameOk && statusOk && dateOk && lotOk && hangOk;
       });
 
-      // Normal detailed or aggregated repeat mode
+      return { rows, repeatF, statusF, lotF, fromD, toD };
+    }
+
+    function runSearch(){
+      const { rows: matchesPre, repeatF } = getFilteredRows();
+
+      if (!plateQuery.value && !nameQuery.value && repeatF === 'all'
+          && (!isAdmin || (statusFilter.value === 'all' && lotFilter.value === 'all' && !dateFromEl.value && !dateToEl.value && !hangQuery.value))){
+        resultsWrap.classList.add("hidden");
+        overallWrap.classList.add("hidden");
+        statMatches.textContent = 0;
+        statCount.textContent = 0;
+        resultsBody.innerHTML = "";
+        return;
+      }
+
       if (repeatF !== 'repeat'){
         statMatches.textContent = matchesPre.length;
         statCount.textContent = matchesPre.length;
@@ -581,7 +621,7 @@
         return;
       }
 
-      // Repeat (aggregated) mode: keep only rows whose plate occurs >1 in matchesPre
+      // Repeat mode aggregated
       const plateCounts = {};
       for (const r of matchesPre){
         const k = normalizePlate(r.plate);
@@ -604,7 +644,7 @@
       errText.textContent = String(err && err.stack ? err.stack : err);
     }
 
-    // Robust loader with fetch + cache-bust + Papa.parse(text)
+    // Robust loader
     async function loadFromCsv(){
       loadStatus.className="text-sm text-gray-400";
       loadStatus.textContent="Fetching data...";
@@ -630,18 +670,16 @@
       }
     }
 
-    // Admin lock/unlock behavior
+    // Admin UI state
     function updateAdminUI(){
       adminState.textContent = isAdmin ? "Admin: Unlocked" : "Admin: Locked";
       adminState.className = "text-xs rounded-full px-2 py-1 " + (isAdmin ? "bg-green-700 text-green-100" : "bg-gray-700 text-gray-200");
       btnUnlock.classList.toggle("hidden", isAdmin);
       enforcerPwd.classList.toggle("hidden", isAdmin);
       btnLock.classList.toggle("hidden", !isAdmin);
+      btnPrintOpen.classList.toggle("hidden", !isAdmin); // show Print button only to admins
 
-      // show/hide advanced filters
       advancedFilters.classList.toggle("hidden", !isAdmin);
-
-      // Re-render header based on current mode
       if (isAdmin && repeatFilter.value === 'repeat') renderHeaderAggregated();
       else renderHeaderDetailed();
     }
@@ -658,10 +696,8 @@
         enforcerMsg.textContent = "Incorrect password.";
       }
     });
-
     btnLock.addEventListener("click", () => {
       isAdmin = false;
-      // clear advanced filters when relocking
       statusFilter.value = "all";
       lotFilter.value = "all";
       repeatFilter.value = "all";
@@ -683,12 +719,8 @@
       const parts = fmt.formatToParts(new Date());
       const map = Object.fromEntries(parts.map(p => [p.type, p.value]));
       return {
-        y: parseInt(map.year,10),
-        m: parseInt(map.month,10),
-        d: parseInt(map.day,10),
-        hh: parseInt(map.hour,10),
-        mm: parseInt(map.minute,10),
-        ss: parseInt(map.second,10),
+        y: parseInt(map.year,10), m: parseInt(map.month,10), d: parseInt(map.day,10),
+        hh: parseInt(map.hour,10), mm: parseInt(map.minute,10), ss: parseInt(map.second,10),
         label: `${map.month}/${map.day}/${map.year} ${map.hour}:${map.minute}:${map.second} ET`
       };
     }
@@ -711,6 +743,135 @@
       }
     });
     if (sessionStorage.getItem("adminOverride") === "1") adminOverride = true;
+
+    // ===== Print Modal controls =====
+    btnPrintOpen.addEventListener("click", () => { printModal.classList.remove("hidden"); });
+    printClose.addEventListener("click", () => { printModal.classList.add("hidden"); });
+    printCancel.addEventListener("click", () => { printModal.classList.add("hidden"); });
+    printModal.addEventListener("click", (e) => { if (e.target === printModal) printModal.classList.add("hidden"); });
+
+    printGo.addEventListener("click", () => {
+      const type = printType.value;
+      let opts = {};
+      // Base on current filters but override where needed
+      if (type === "paid")   opts = { statusF: "paid" };
+      if (type === "unpaid") opts = { statusF: "unpaid" };
+      if (type === "lot")    opts = { lotF: lotFilter.value }; // uses current lot
+      if (type === "date")   opts = { fromD: parseDateOnlyInput(dateFromEl.value), toD: parseDateOnlyInput(dateToEl.value) };
+      // current = no override, repeat handled separately
+
+      // Get rows under these options
+      const { rows, fromD, toD, lotF } = getFilteredRows(opts);
+
+      // Build title
+      const nowLabel = new Date().toLocaleString();
+      let title = "Report – ";
+      if (type === "current") title += "Current Filters";
+      if (type === "paid")    title += "Paid Only";
+      if (type === "unpaid")  title += "Unpaid Only";
+      if (type === "lot")     title += `By Lot (${lotF})`;
+      if (type === "date")    title += `By Date${fromD ? " from "+fromD.toLocaleDateString() : ""}${toD ? " to "+toD.toLocaleDateString() : ""}`;
+      if (type === "repeat")  title += "Repeat Offenders (Aggregated)";
+
+      // Generate printable HTML
+      const win = window.open("", "_blank");
+      if (!win) { alert("Popup blocked. Please allow popups to generate the report."); return; }
+
+      const style = `
+        <style>
+          *{ box-sizing:border-box; }
+          body{ font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica Neue, Arial, Noto Sans, "Apple Color Emoji","Segoe UI Emoji"; color:#111; margin:24px; }
+          h1{ font-size:20px; margin:0 0 8px; }
+          .meta{ color:#444; font-size:12px; margin-bottom:16px; }
+          table{ width:100%; border-collapse: collapse; }
+          th, td{ text-align:left; border-bottom:1px solid #ddd; padding:8px 10px; font-size:12px; }
+          th{ background:#f3f4f6; }
+          .badge{ display:inline-block; padding:2px 8px; border-radius:9999px; font-size:11px; color:#fff; }
+          .paid{ background:#16a34a; }
+          .unpaid{ background:#dc2626; }
+          @media print {
+            @page { size: auto; margin: 12mm; }
+            body{ margin:0; }
+          }
+        </style>
+      `;
+
+      let html = `<html><head><title>${escapeHtml(title)}</title>${style}</head><body>`;
+      html += `<h1>${escapeHtml(title)}</h1>`;
+      html += `<div class="meta">Generated: ${escapeHtml(nowLabel)}</div>`;
+
+      if (type === "repeat"){
+        // Aggregate by plate from rows and show Plate | Name | Offences
+        const counts = {};
+        const plateForms = {};
+        for (const r of rows){
+          const key = normalizePlate(r.plate);
+          counts[key] = (counts[key] || 0) + 1;
+          if (!plateForms[key]) plateForms[key] = [];
+          plateForms[key].push(String(r.plate||"").trim());
+        }
+        const agg = [];
+        for (const r of rows){
+          const key = normalizePlate(r.plate);
+          if (counts[key] > 1){
+            // choose display plate & name
+            const displayPlate = mostCommonNonEmpty(plateForms[key]) || key;
+            const displayName  = bestNameByPlate[key] || "";
+            agg.push({ plate: displayPlate, name: displayName, count: counts[key], key });
+            counts[key] = -9999; // prevent duplicates in final array
+          }
+        }
+        agg.sort((a,b)=> b.count - a.count || a.plate.localeCompare(b.plate));
+
+        html += `<div class="meta">Plates listed: ${agg.length}</div>`;
+        html += `<table><thead><tr>
+                  <th>License Plate</th><th>Driver Name</th><th>Offences</th>
+                </tr></thead><tbody>`;
+        for (const row of agg){
+          html += `<tr>
+                    <td>${escapeHtml(row.plate)}</td>
+                    <td>${escapeHtml(row.name || "")}</td>
+                    <td>${row.count}</td>
+                  </tr>`;
+        }
+        html += `</tbody></table>`;
+      } else {
+        // Detailed rows
+        html += `<div class="meta">Rows: ${rows.length}</div>`;
+        html += `<table><thead><tr>
+                  <th>Timestamp</th>
+                  <th>License Plate</th>
+                  <th>Driver Name</th>
+                  <th>Reason</th>
+                  <th>Location</th>
+                  <th>Hang Tag</th>
+                  <th>Enforcer</th>
+                  <th>Status</th>
+                </tr></thead><tbody>`;
+        for (const r of rows){
+          const st = normalizeStatus(r.status);
+          html += `<tr>
+                    <td>${escapeHtml(formatDate(r.timestamp))}</td>
+                    <td>${escapeHtml(r.plate)}</td>
+                    <td>${escapeHtml(r.name)}</td>
+                    <td>${escapeHtml(r.reason)}</td>
+                    <td>${escapeHtml(r.location || "")}</td>
+                    <td>${escapeHtml(r.hangtag || "")}</td>
+                    <td>${escapeHtml(r.enforcer || "")}</td>
+                    <td><span class="badge ${st === "Paid" ? "paid" : "unpaid"}">${st}</span></td>
+                  </tr>`;
+        }
+        html += `</tbody></table>`;
+      }
+
+      html += `</body></html>`;
+      win.document.open();
+      win.document.write(html);
+      win.document.close();
+      // Slight delay ensures styles/layout are ready before printing
+      win.onload = () => { win.focus(); win.print(); };
+      printModal.classList.add("hidden");
+    });
 
     // Events
     document.getElementById("btnReload").addEventListener("click", loadFromCsv);
@@ -742,7 +903,7 @@
 
     // Init
     renderHeaderDetailed();
-    updateAdminUI();                  // start locked, hide advanced filters + admin columns
+    updateAdminUI();                  // start locked
     loadFromCsv();                    // first load
     setInterval(loadFromCsv, 60000);  // auto-refresh every 1 minute
     setInterval(updateLastUpdatedDisplay, 1000);
