@@ -111,6 +111,7 @@
               <option value="all">All</option>
               <option value="paid">Paid</option>
               <option value="unpaid">Unpaid</option>
+              <option value="excempt">Excempt</option>
             </select>
           </div>
           <div>
@@ -156,7 +157,7 @@
         <button id="btnClear"  class="rounded-lg bg-gray-600 text-gray-100 px-4 py-2 font-medium hover:bg-gray-500">Clear</button>
       </div>
 
-      <!-- Overall paid/unpaid banner -->
+      <!-- Overall paid/unpaid/excempt banner -->
       <div id="overallWrap" class="hidden mt-4">
         <div id="overallBadge" class="inline-flex items-center rounded-full px-3 py-1 text-sm font-medium"></div>
       </div>
@@ -370,17 +371,22 @@
       }
       return out;
     }
+
+    // Map status inputs to three states: Paid / Unpaid / Excempt
     function normalizeStatus(v){
       const s = String(v||"").trim().toLowerCase();
+      if (["3","excempt","exempt"].includes(s)) return "Excempt";
       if (["paid","true","yes","y","1","paid in full"].includes(s)) return "Paid";
-      if (["unpaid","false","no","n","0"].includes(s)) return "Unpaid";
+      if (["unpaid","false","no","n","0",""].includes(s)) return "Unpaid";
       return "Unpaid";
     }
+
     function statusBadge(status){
-      const isPaid = status === "Paid";
-      const classes = isPaid ? "bg-green-700/70 text-green-100" : "bg-red-700/70 text-red-100";
-      return `<span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${classes}">${status}</span>`;
+      if (status === "Paid")   return `<span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-green-700/70 text-green-100">Paid</span>`;
+      if (status === "Excempt")return `<span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-yellow-600/70 text-yellow-100">Excempt</span>`;
+      return `<span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-red-700/70 text-red-100">Unpaid</span>`;
     }
+
     function normalizePlate(s){ return String(s||"").toUpperCase().replace(/[-\s]/g,""); }
     function normalizeHang(s){ return String(s||"").toUpperCase().replace(/[^A-Z0-9]/g,""); }
 
@@ -582,7 +588,8 @@
 
         if (plateQ) plateOk = normalizePlate(r.plate).includes(normPlateQ);
         if (nameQ)  nameOk  = String(r.name||"").toLowerCase().includes(lcNameQ);
-        if (statusF !== 'all') statusOk = normalizeStatus(r.status) === (statusF === 'paid' ? 'Paid' : 'Unpaid');
+        if (statusF !== 'all') statusOk = normalizeStatus(r.status) ===
+            (statusF === 'paid' ? 'Paid' : statusF === 'excempt' ? 'Excempt' : 'Unpaid');
         if (fromD || toD)      dateOk = recordInDateRange(r.timestamp, fromD, toD);
         if (lotF !== 'all')    lotOk  = String(r.location||"").toLowerCase().trim() === lotSel;
         if (hangQ)             hangOk = normalizeHang(r.hangtag).includes(normHangQ);
@@ -610,11 +617,18 @@
         statMatches.textContent = matchesPre.length;
         statCount.textContent = matchesPre.length;
 
+        // Overall badge: Paid if all Paid; Excempt if all Excempt; else Unpaid
         let overall = "Unpaid";
-        if (matchesPre.length > 0 && matchesPre.every(r => normalizeStatus(r.status) === "Paid")) overall = "Paid";
+        if (matchesPre.length > 0) {
+          const allPaid = matchesPre.every(r => normalizeStatus(r.status) === "Paid");
+          const allEx   = matchesPre.every(r => normalizeStatus(r.status) === "Excempt");
+          overall = allPaid ? "Paid" : allEx ? "Excempt" : "Unpaid";
+        }
         overallWrap.classList.remove("hidden");
         overallBadge.className = "inline-flex items-center rounded-full px-3 py-1 text-sm font-medium " +
-          (overall === "Paid" ? "bg-green-700/70 text-green-100" : "bg-red-700/70 text-red-100");
+          (overall === "Paid" ? "bg-green-700/70 text-green-100"
+           : overall === "Excempt" ? "bg-yellow-600/70 text-yellow-100"
+           : "bg-red-700/70 text-red-100");
         overallBadge.textContent = overall;
 
         renderResultsDetailed(matchesPre);
@@ -753,17 +767,13 @@
     printGo.addEventListener("click", () => {
       const type = printType.value;
       let opts = {};
-      // Base on current filters but override where needed
       if (type === "paid")   opts = { statusF: "paid" };
       if (type === "unpaid") opts = { statusF: "unpaid" };
-      if (type === "lot")    opts = { lotF: lotFilter.value }; // uses current lot
+      if (type === "lot")    opts = { lotF: lotFilter.value };
       if (type === "date")   opts = { fromD: parseDateOnlyInput(dateFromEl.value), toD: parseDateOnlyInput(dateToEl.value) };
-      // current = no override, repeat handled separately
 
-      // Get rows under these options
       const { rows, fromD, toD, lotF } = getFilteredRows(opts);
 
-      // Build title
       const nowLabel = new Date().toLocaleString();
       let title = "Report – ";
       if (type === "current") title += "Current Filters";
@@ -773,7 +783,6 @@
       if (type === "date")    title += `By Date${fromD ? " from "+fromD.toLocaleDateString() : ""}${toD ? " to "+toD.toLocaleDateString() : ""}`;
       if (type === "repeat")  title += "Repeat Offenders (Aggregated)";
 
-      // Generate printable HTML
       const win = window.open("", "_blank");
       if (!win) { alert("Popup blocked. Please allow popups to generate the report."); return; }
 
@@ -789,6 +798,7 @@
           .badge{ display:inline-block; padding:2px 8px; border-radius:9999px; font-size:11px; color:#fff; }
           .paid{ background:#16a34a; }
           .unpaid{ background:#dc2626; }
+          .excempt{ background:#d97706; } /* amber-600 */
           @media print {
             @page { size: auto; margin: 12mm; }
             body{ margin:0; }
@@ -801,7 +811,6 @@
       html += `<div class="meta">Generated: ${escapeHtml(nowLabel)}</div>`;
 
       if (type === "repeat"){
-        // Aggregate by plate from rows and show Plate | Name | Offences
         const counts = {};
         const plateForms = {};
         for (const r of rows){
@@ -814,11 +823,10 @@
         for (const r of rows){
           const key = normalizePlate(r.plate);
           if (counts[key] > 1){
-            // choose display plate & name
             const displayPlate = mostCommonNonEmpty(plateForms[key]) || key;
             const displayName  = bestNameByPlate[key] || "";
             agg.push({ plate: displayPlate, name: displayName, count: counts[key], key });
-            counts[key] = -9999; // prevent duplicates in final array
+            counts[key] = -9999;
           }
         }
         agg.sort((a,b)=> b.count - a.count || a.plate.localeCompare(b.plate));
@@ -836,7 +844,6 @@
         }
         html += `</tbody></table>`;
       } else {
-        // Detailed rows
         html += `<div class="meta">Rows: ${rows.length}</div>`;
         html += `<table><thead><tr>
                   <th>Timestamp</th>
@@ -850,6 +857,7 @@
                 </tr></thead><tbody>`;
         for (const r of rows){
           const st = normalizeStatus(r.status);
+          const cls = st === "Paid" ? "paid" : st === "Excempt" ? "excempt" : "unpaid";
           html += `<tr>
                     <td>${escapeHtml(formatDate(r.timestamp))}</td>
                     <td>${escapeHtml(r.plate)}</td>
@@ -858,17 +866,14 @@
                     <td>${escapeHtml(r.location || "")}</td>
                     <td>${escapeHtml(r.hangtag || "")}</td>
                     <td>${escapeHtml(r.enforcer || "")}</td>
-                    <td><span class="badge ${st === "Paid" ? "paid" : "unpaid"}">${st}</span></td>
+                    <td><span class="badge ${cls}">${st}</span></td>
                   </tr>`;
         }
         html += `</tbody></table>`;
       }
 
       html += `</body></html>`;
-      win.document.open();
-      win.document.write(html);
-      win.document.close();
-      // Slight delay ensures styles/layout are ready before printing
+      win.document.open(); win.document.write(html); win.document.close();
       win.onload = () => { win.focus(); win.print(); };
       printModal.classList.add("hidden");
     });
